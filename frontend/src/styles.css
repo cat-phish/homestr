@@ -1,0 +1,77 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+}
+
+.app-bar {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid currentColor;
+}
+
+.app-bar button {
+  margin-left: auto;
+}
+
+.login {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 20rem;
+  margin: 4rem auto;
+}
+
+.dashboard {
+  padding: 1rem;
+}
+
+.dashboard__devices {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+}
+
+.device-card {
+  padding: 1rem;
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+}
+
+.device-card[data-status='OFFLINE'],
+.device-card[data-status='ERROR'] {
+  opacity: 0.6;
+}
+
+.device-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.device-card__controls {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.dashboard__rules {
+  padding: 0;
+  list-style: none;
+}
+
+.dashboard__rules li {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.25rem 0;
+}

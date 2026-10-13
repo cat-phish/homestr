@@ -1,0 +1,41 @@
+# Build output
+build/
+backend/build/
+cmake-build-*/
+_deps/
+*.o
+*.a
+*.so
+*.dylib
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/node_modules/
+frontend/coverage/
+frontend/.vite/
+*.tsbuildinfo
+
+# Test & coverage
+Testing/
+backend/coverage/
+*.gcda
+*.gcno
+*.gcov
+
+# Environment & secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Docker volumes
+database/data/
+
+# Editors & OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+compile_commands.json
+.cache/

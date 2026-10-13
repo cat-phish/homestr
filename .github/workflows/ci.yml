@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    name: Formatting
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to the same major version as backend/Dockerfile: successive
+      # clang-format releases format the same file differently.
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y clang-format-16
+
+      - name: Check C++ formatting
+        run: |
+          mapfile -t files < <(git ls-files '*.cpp' '*.hpp')
+          clang-format-16 --dry-run --Werror "${files[@]}"
+
+  backend:
+    name: Backend (C++20)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential cmake ninja-build libasio-dev libmariadb-dev
+
+      - name: Cache FetchContent dependencies
+        uses: actions/cache@v4
+        with:
+          path: backend/build/_deps
+          key: deps-${{ runner.os }}-${{ hashFiles('backend/CMakeLists.txt') }}
+
+      # MariaDB Connector/C++ is not packaged for Ubuntu. The unit tests use the
+      # in-memory repository, so CI builds without it; the Docker image builds
+      # it from source.
+      - name: Configure
+        run: |
+          cmake -S backend -B backend/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DHOMESTR_BUILD_TESTS=ON \
+            -DHOMESTR_WITH_MARIADB=OFF \
+            -DHOMESTR_WARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build backend/build
+
+      - name: Test
+        run: ctest --test-dir backend/build --output-on-failure
+
+  frontend:
+    name: Frontend (TypeScript)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci || npm install
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test -- --coverage
+
+      - name: Build
+        run: npm run build
+
+  schema:
+    name: Database schema
+    runs-on: ubuntu-24.04
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: ci_root
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Proves init.sql applies to a clean server, so a broken DDL cannot reach
+      # main and break every developer's first `docker compose up`.
+      - name: Apply init.sql
+        run: mariadb -h 127.0.0.1 -P 3306 -u root -pci_root < database/init.sql
+
+      - name: Verify the expected tables exist
+        run: |
+          mariadb -h 127.0.0.1 -P 3306 -u root -pci_root homestr_db \
+            -e "SELECT table_name FROM information_schema.tables
+                WHERE table_schema = 'homestr_db' ORDER BY table_name;"
+
+  docker:
+    name: Docker images
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Builds the release targets, which also run the C++ and TypeScript test
+      # suites inside the images.
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          target: runtime
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          target: runtime
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

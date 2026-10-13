@@ -1,0 +1,698 @@
+openapi: 3.0.3
+
+info:
+  title: HomeStr Hub API
+  version: 0.1.0
+  description: |
+    REST and WebSocket contract between the TypeScript WebUI and the C++20 hub.
+
+    This file is the source of truth: under Spec-Driven Development it is
+    updated **before** any handler in `backend/src/controllers/` or any call in
+    `frontend/src/api/`. Entities referenced here are defined in
+    `specs/domain-model.md`.
+  license:
+    name: See LICENSE
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local backend (direct)
+  - url: http://localhost:5173/api/v1
+    description: Local Vite dev server (proxied to the backend)
+
+tags:
+  - name: Auth
+    description: Login and session handling
+  - name: Dashboard
+    description: Aggregated household state
+  - name: Devices
+    description: Discovery, registration and control
+  - name: Rules
+    description: Automation rules
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Authenticate a user and open a session
+      description: |
+        Verifies the password against `users.password_hash` and returns a bearer
+        token recorded in `sessions`. The only unauthenticated endpoint.
+      security: []
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+            example:
+              email: admin@homestr.local
+              password: correct-horse-battery-staple
+      responses:
+        '200':
+          description: Session opened
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, user]
+                properties:
+                  token:
+                    type: string
+                    description: Bearer token for the Authorization header
+                  user:
+                    $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Invalidate the current session
+      operationId: logout
+      responses:
+        '204':
+          description: Session closed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Household devices and rules in one payload
+      description: |
+        Single call that backs the initial WebUI render. The same payload is
+        pushed as the `snapshot` frame when a WebSocket client connects.
+      operationId: getDashboard
+      responses:
+        '200':
+          description: Current household state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dashboard'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /devices:
+    get:
+      tags: [Devices]
+      summary: List the registered devices of the household
+      operationId: listDevices
+      responses:
+        '200':
+          description: Registered devices
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices]
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Device'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Devices]
+      summary: Register a device into a household
+      description: |
+        Admin operation (`Admin::addDevice`). Moves a discovered device into
+        `devices` with a household, creating its subtype row.
+      operationId: registerDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceRegistration'
+      responses:
+        '201':
+          description: Device registered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [registered]
+                properties:
+                  registered:
+                    type: string
+                    format: uuid
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: A device with that id is already registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /devices/discover:
+    get:
+      tags: [Devices]
+      summary: Devices seen on the LAN but not yet registered
+      description: Triggers an mDNS/SSDP sweep and returns the candidates.
+      operationId: discoverDevices
+      responses:
+        '200':
+          description: Discovery results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [discovered]
+                properties:
+                  discovered:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DiscoveredDevice'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /devices/{deviceId}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+
+    get:
+      tags: [Devices]
+      summary: Full state of one device
+      operationId: getDevice
+      responses:
+        '200':
+          description: Device state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Devices]
+      summary: Unregister a device
+      description: Admin operation (`Admin::removeDevice`).
+      operationId: unregisterDevice
+      responses:
+        '204':
+          description: Device removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /devices/{deviceId}/commands:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+
+    post:
+      tags: [Devices]
+      summary: Dispatch a command to a device
+      description: |
+        Command dispatch workflow: `DeviceManager::sendCommand` applies the
+        command, persists the new state, writes a `device_events` row and
+        broadcasts a `device_state` WebSocket frame.
+
+        Valid commands per type:
+          * any      -- `turnOn`, `turnOff`
+          * light    -- `setBrightness` (params.level 0-100),
+                        `setColor` (params.color `#RRGGBB`)
+          * speaker  -- `play` (params.track optional), `pause`,
+                        `setVolume` (params.level 0-100), `connect`
+      operationId: sendDeviceCommand
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Command'
+            examples:
+              dim:
+                summary: Dim a light to 40%
+                value:
+                  command: setBrightness
+                  params:
+                    level: 40
+              play:
+                summary: Start playback
+                value:
+                  command: play
+                  params:
+                    track: spotify:track:xyz
+      responses:
+        '200':
+          description: Command accepted; body is the device's new state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: |
+            The device rejected the command: unreachable, not connected, or the
+            command is not supported by that device type.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /rules:
+    get:
+      tags: [Rules]
+      summary: List the household's automation rules
+      operationId: listRules
+      responses:
+        '200':
+          description: Automation rules
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rules]
+                properties:
+                  rules:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AutomationRule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Rules]
+      summary: Create an automation rule
+      operationId: createRule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutomationRule'
+            example:
+              id: 6f1c2a90-0000-4000-8000-000000000001
+              name: Lights out at 22:00
+              enabled: true
+              triggerType: SCHEDULE
+              trigger:
+                cron: '0 22 * * *'
+              actions:
+                - deviceId: 11111111-0000-4000-8000-000000000001
+                  command: turnOff
+                  params: {}
+      responses:
+        '201':
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationRule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: A rule with that id already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /rules/{ruleId}/enabled:
+    parameters:
+      - $ref: '#/components/parameters/RuleId'
+
+    put:
+      tags: [Rules]
+      summary: Enable or disable a rule
+      description: Maps onto `AutomationRule::enable` / `disable`.
+      operationId: setRuleEnabled
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: New state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, enabled]
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  enabled:
+                    type: boolean
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /rules/{ruleId}/trigger:
+    parameters:
+      - $ref: '#/components/parameters/RuleId'
+
+    post:
+      tags: [Rules]
+      summary: Fire a rule's actions immediately
+      description: Runs `execute()` without waiting for the trigger to match.
+      operationId: triggerRule
+      responses:
+        '200':
+          description: Ids of the rules that fired
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [fired]
+                properties:
+                  fired:
+                    type: array
+                    items:
+                      type: string
+                      format: uuid
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: The rule is unknown or disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /ws:
+    get:
+      tags: [Dashboard]
+      summary: WebSocket push channel (documented here; not a plain HTTP call)
+      description: |
+        `GET /api/v1/ws` with `Upgrade: websocket`. The server pushes:
+
+          * `{"type":"snapshot","payload":<Dashboard>}` once on connect
+          * `{"type":"device_state","device":<Device>}` on every state change
+          * `{"type":"pong"}` in reply to the client's `ping` keep-alive
+
+        The channel is push-only: `ping` is the only frame a client sends.
+      operationId: openWebSocket
+      responses:
+        '101':
+          description: Switching protocols
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Token issued by `POST /auth/login`.
+
+  parameters:
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    RuleId:
+      name: ruleId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Malformed body or missing required field
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unauthorized:
+      description: Missing, expired or invalid bearer token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Forbidden:
+      description: Authenticated, but the operation requires the admin role
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: No such resource
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable reason; never contains credentials.
+      example:
+        error: unknown device 11111111-0000-4000-8000-000000000009
+
+    User:
+      type: object
+      description: Never carries `password` or `password_hash`.
+      required: [id, name, email, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 100
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [user, admin]
+
+    DeviceStatus:
+      type: string
+      enum: [ONLINE, OFFLINE, ERROR]
+
+    DeviceBase:
+      type: object
+      required: [id, name, ipAddress, type, status, powerOn]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 100
+        ipAddress:
+          type: string
+          description: IPv4 or IPv6 address of the device on the local network
+        type:
+          type: string
+          enum: [light, speaker, generic]
+        status:
+          $ref: '#/components/schemas/DeviceStatus'
+        powerOn:
+          type: boolean
+
+    Light:
+      allOf:
+        - $ref: '#/components/schemas/DeviceBase'
+        - type: object
+          required: [brightness, color]
+          properties:
+            brightness:
+              type: integer
+              minimum: 0
+              maximum: 100
+            color:
+              type: string
+              pattern: '^#[0-9A-Fa-f]{6}$'
+
+    SmartSpeaker:
+      allOf:
+        - $ref: '#/components/schemas/DeviceBase'
+        - type: object
+          required: [connected, volume, playbackState]
+          properties:
+            connected:
+              type: boolean
+            volume:
+              type: integer
+              minimum: 0
+              maximum: 100
+            playbackState:
+              type: string
+              enum: [PLAYING, PAUSED, STOPPED]
+            currentTrack:
+              type: string
+
+    Device:
+      description: Discriminated on `type` (SmartDevice and its subclasses).
+      oneOf:
+        - $ref: '#/components/schemas/Light'
+        - $ref: '#/components/schemas/SmartSpeaker'
+        - $ref: '#/components/schemas/DeviceBase'
+      discriminator:
+        propertyName: type
+        mapping:
+          light: '#/components/schemas/Light'
+          speaker: '#/components/schemas/SmartSpeaker'
+          generic: '#/components/schemas/DeviceBase'
+
+    DiscoveredDevice:
+      type: object
+      required: [id, name, ipAddress, type]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        ipAddress:
+          type: string
+        type:
+          type: string
+          enum: [light, speaker, generic]
+
+    DeviceRegistration:
+      type: object
+      required: [id, householdId, name, ipAddress, type]
+      properties:
+        id:
+          type: string
+          format: uuid
+        householdId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 100
+        ipAddress:
+          type: string
+        type:
+          type: string
+          enum: [light, speaker, generic]
+        status:
+          $ref: '#/components/schemas/DeviceStatus'
+        attributes:
+          type: object
+          description: Subtype attributes, e.g. `{"brightness":100,"color":"#FFFFFF"}`
+          additionalProperties: true
+
+    Command:
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: string
+          enum:
+            [turnOn, turnOff, setBrightness, setColor, play, pause, setVolume, connect]
+        params:
+          type: object
+          additionalProperties: true
+
+    RuleAction:
+      type: object
+      required: [deviceId, command]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+        command:
+          type: string
+        params:
+          type: object
+          additionalProperties: true
+
+    AutomationRule:
+      type: object
+      required: [id, name, triggerType, trigger, actions]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 100
+        enabled:
+          type: boolean
+          default: true
+        triggerType:
+          type: string
+          enum: [SCHEDULE, DEVICE_STATE, MANUAL]
+        trigger:
+          type: object
+          description: |
+            Shape depends on `triggerType`:
+              * SCHEDULE     -- `{"cron":"0 22 * * *"}`
+              * DEVICE_STATE -- `{"deviceId":"...","attribute":"status","equals":"ONLINE"}`
+                                (`equals` omitted matches any change)
+              * MANUAL       -- `{}`
+          additionalProperties: true
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuleAction'
+
+    Dashboard:
+      type: object
+      required: [householdId, devices, rules]
+      properties:
+        householdId:
+          type: string
+          format: uuid
+        devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/Device'
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutomationRule'

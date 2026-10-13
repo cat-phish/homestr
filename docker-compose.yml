@@ -1,0 +1,103 @@
+# HomeStr local development stack: MariaDB + C++ hub + Vite WebUI.
+#
+#   cp .env.example .env && docker compose up --build
+#
+# Both application services bind-mount their sources, so edits on the host are
+# picked up without rebuilding the image: Vite hot-reloads, and the backend
+# recompiles on `docker compose restart backend`.
+name: homestr
+
+services:
+  db:
+    image: mariadb:11.4
+    container_name: homestr-db
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-homestr_dev_root}
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-homestr_db}
+      MARIADB_USER: ${MARIADB_USER:-homestr_user}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-homestr_dev_pw}
+    ports:
+      # Exposed for local tooling only; the services talk over the compose
+      # network.
+      - '${DB_PUBLISHED_PORT:-3306}:3306'
+    volumes:
+      - db-data:/var/lib/mysql
+      # Runs once, on an empty data directory. `docker compose down -v` to
+      # re-seed after editing the schema.
+      # `z` relabels for SELinux (Fedora/RHEL); harmless elsewhere.
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro,z
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - homestr
+
+  backend:
+    build:
+      context: ./backend
+      target: dev
+    container_name: homestr-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-homestr_db}
+      MARIADB_USER: ${MARIADB_USER:-homestr_user}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-homestr_dev_pw}
+      HOMESTR_HTTP_PORT: 8080
+      HOMESTR_LOG_LEVEL: ${HOMESTR_LOG_LEVEL:-debug}
+      HOMESTR_BUILD_TYPE: ${HOMESTR_BUILD_TYPE:-Debug}
+      HOMESTR_RUN_TESTS: ${HOMESTR_RUN_TESTS:-0}
+    ports:
+      - '${HOMESTR_HTTP_PORT:-8080}:8080'
+    volumes:
+      - ./backend:/app:z
+      # Do not mount ./.clang-format in here: Docker creates the missing mount
+      # target, leaving an empty backend/.clang-format in the repo, and an
+      # empty config silently reverts clang-format to LLVM defaults. Run the
+      # formatter from the repo root instead.
+      # Keeps the CMake cache and the FetchContent downloads out of the host
+      # tree and across restarts.
+      - backend-build:/app/build
+    networks:
+      - homestr
+
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    container_name: homestr-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      # Dev requests go through the Vite proxy, which forwards to the hub over
+      # the compose network, so the browser needs no backend origin.
+      VITE_PROXY_TARGET: http://backend:8080
+      FRONTEND_PORT: 5173
+      CHOKIDAR_USEPOLLING: 'true'
+    ports:
+      - '${FRONTEND_PORT:-5173}:5173'
+    volumes:
+      - ./frontend:/app:z
+      # Anonymous-style named volume: keeps the container's node_modules from
+      # being shadowed by the host bind mount.
+      - frontend-node-modules:/app/node_modules
+    networks:
+      - homestr
+
+volumes:
+  db-data:
+  backend-build:
+  frontend-node-modules:
+
+networks:
+  homestr:
+    driver: bridge

@@ -1,0 +1,49 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+max_line_length = 100
+
+[*.{cpp,hpp,cc,h,cxx}]
+indent_size = 2
+max_line_length = 100
+
+[CMakeLists.txt]
+indent_size = 2
+
+[*.cmake]
+indent_size = 2
+
+[*.{ts,tsx,js,jsx,mjs,cjs}]
+indent_size = 2
+max_line_length = 100
+
+[*.{json,jsonc}]
+indent_size = 2
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[*.sql]
+indent_size = 4
+max_line_length = off
+
+[*.md]
+indent_size = 2
+trim_trailing_whitespace = false
+max_line_length = 80
+
+[Makefile]
+indent_style = tab
+
+[*.{sh,bash,zsh}]
+indent_size = 2
+
+[LICENSE]
+indent_size = unset
+max_line_length = off
