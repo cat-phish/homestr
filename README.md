@@ -8,7 +8,7 @@ devices and automation rules. The whole stack runs under Docker Compose.
 
 The project follows **Spec-Driven Development**: `specs/` is the source of truth
 and changes before the code does. See [CLAUDE.md](CLAUDE.md) for conventions and
-the full command reference.
+the full command reference, and [ROADMAP.md](ROADMAP.md) for what to build next.
 
 > **Status: scaffolding.** The architecture, schema, build, tests and CI are in
 > place and the stack runs end to end, but several pieces are deliberately
@@ -95,8 +95,9 @@ Re-running it is safe — existing devices report `exists` rather than erroring.
 | Rule create / enable / disable / manual trigger | Multi-household support — the hub loads one hard-coded household at boot |
 
 Every gap above is tracked under "Open items" in
-[`specs/domain-model.md`](specs/domain-model.md). Add to that list rather than
-widening scope silently.
+[`specs/domain-model.md`](specs/domain-model.md), and sequenced into work items
+in [ROADMAP.md](ROADMAP.md). Add to those lists rather than widening scope
+silently.
 
 Because there is no real hardware, a device only accepts commands while its
 `status` is `ONLINE`. Registering one as `OFFLINE` is how you exercise the
