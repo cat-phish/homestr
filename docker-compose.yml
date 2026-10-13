@@ -5,12 +5,23 @@
 # Both application services bind-mount their sources, so edits on the host are
 # picked up without rebuilding the image: Vite hot-reloads, and the backend
 # recompiles on `docker compose restart backend`.
+#
+# Nothing here is machine-specific. Everything that differs between developers
+# and between platforms is an environment variable with a default, so the only
+# file anyone edits is their own untracked .env:
+#   * published host ports        -- *_PUBLISHED_PORT
+#   * SELinux bind-mount labels   -- VOLUME_SUFFIX
+#   * container and volume names  -- COMPOSE_PROJECT_NAME
+#
+# Container names are deliberately not pinned: a fixed container_name makes two
+# checkouts (or two worktrees, or two developers on one host) collide. Compose
+# derives names from the project instead, so overriding COMPOSE_PROJECT_NAME
+# gives a fully independent stack.
 name: homestr
 
 services:
   db:
     image: mariadb:11.4
-    container_name: homestr-db
     restart: unless-stopped
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-homestr_dev_root}
@@ -19,14 +30,13 @@ services:
       MARIADB_PASSWORD: ${MARIADB_PASSWORD:-homestr_dev_pw}
     ports:
       # Exposed for local tooling only; the services talk over the compose
-      # network.
+      # network. Change DB_PUBLISHED_PORT if a local MariaDB/MySQL holds 3306.
       - '${DB_PUBLISHED_PORT:-3306}:3306'
     volumes:
       - db-data:/var/lib/mysql
       # Runs once, on an empty data directory. `docker compose down -v` to
       # re-seed after editing the schema.
-      # `z` relabels for SELinux (Fedora/RHEL); harmless elsewhere.
-      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro,z
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro${VOLUME_SUFFIX:-}
     healthcheck:
       test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
       interval: 10s
@@ -40,7 +50,6 @@ services:
     build:
       context: ./backend
       target: dev
-    container_name: homestr-backend
     restart: unless-stopped
     depends_on:
       db:
@@ -51,18 +60,21 @@ services:
       MARIADB_DATABASE: ${MARIADB_DATABASE:-homestr_db}
       MARIADB_USER: ${MARIADB_USER:-homestr_user}
       MARIADB_PASSWORD: ${MARIADB_PASSWORD:-homestr_dev_pw}
+      # Port inside the container. Kept fixed so the frontend proxy and the
+      # nginx config can rely on backend:8080; publish elsewhere instead.
       HOMESTR_HTTP_PORT: 8080
       HOMESTR_LOG_LEVEL: ${HOMESTR_LOG_LEVEL:-debug}
       HOMESTR_BUILD_TYPE: ${HOMESTR_BUILD_TYPE:-Debug}
       HOMESTR_RUN_TESTS: ${HOMESTR_RUN_TESTS:-0}
     ports:
-      - '${HOMESTR_HTTP_PORT:-8080}:8080'
+      - '${HOMESTR_PUBLISHED_PORT:-8080}:8080'
     volumes:
-      - ./backend:/app:z
+      - ./backend:/app:rw${VOLUME_SUFFIX:-}
       # Do not mount ./.clang-format in here: Docker creates the missing mount
       # target, leaving an empty backend/.clang-format in the repo, and an
       # empty config silently reverts clang-format to LLVM defaults. Run the
       # formatter from the repo root instead.
+      #
       # Keeps the CMake cache and the FetchContent downloads out of the host
       # tree and across restarts.
       - backend-build:/app/build
@@ -73,7 +85,6 @@ services:
     build:
       context: ./frontend
       target: dev
-    container_name: homestr-frontend
     restart: unless-stopped
     depends_on:
       - backend
@@ -81,14 +92,15 @@ services:
       # Dev requests go through the Vite proxy, which forwards to the hub over
       # the compose network, so the browser needs no backend origin.
       VITE_PROXY_TARGET: http://backend:8080
+      # Port inside the container; read by vite.config.ts.
       FRONTEND_PORT: 5173
       CHOKIDAR_USEPOLLING: 'true'
     ports:
-      - '${FRONTEND_PORT:-5173}:5173'
+      - '${FRONTEND_PUBLISHED_PORT:-5173}:5173'
     volumes:
-      - ./frontend:/app:z
-      # Anonymous-style named volume: keeps the container's node_modules from
-      # being shadowed by the host bind mount.
+      - ./frontend:/app:rw${VOLUME_SUFFIX:-}
+      # Named volume: keeps the container's node_modules from being shadowed by
+      # the host bind mount, and keeps Linux-built binaries off a macOS host.
       - frontend-node-modules:/app/node_modules
     networks:
       - homestr

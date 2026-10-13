@@ -33,13 +33,21 @@ git clone <this repo> && cd homestr
 cp .env.example .env
 ```
 
-Now open `.env` and check two things:
+Now open `.env` and check three things:
 
-1. `DB_PUBLISHED_PORT` — if you already run MariaDB or MySQL locally, port 3306
+1. `VOLUME_SUFFIX` — set it to `,z` if you are on Fedora, RHEL or CentOS
+   (SELinux). Leave it empty on macOS, Windows, or Linux without SELinux.
+   Without it, SELinux hosts fail with `permission denied` on the mounted
+   sources.
+2. `DB_PUBLISHED_PORT` — if you already run MariaDB or MySQL locally, port 3306
    is taken and the `db` container will fail to start. Set it to `3307` or
-   anything free.
-2. The passwords are placeholders. Fine for local work, never for anything
+   anything free. Same for `HOMESTR_PUBLISHED_PORT` and
+   `FRONTEND_PUBLISHED_PORT` if 8080 or 5173 are busy.
+3. The passwords are placeholders. Fine for local work, never for anything
    reachable.
+
+See [Working across machines](#working-across-machines-and-alongside-other-developers)
+for running more than one stack at once.
 
 Then:
 
@@ -56,12 +64,15 @@ named volume. Later starts are seconds. Wait for:
 homestr-backend  | [hub] listening on 0.0.0.0:8080
 ```
 
-| Service | URL |
-| --- | --- |
-| WebUI | <http://localhost:5173> |
-| API | <http://localhost:8080/api/v1> |
-| Health probe | <http://localhost:8080/healthz> |
-| MariaDB | `localhost:3306` (or your `DB_PUBLISHED_PORT`) |
+At the default ports — substitute your own if you changed them in `.env`. The
+`curl` examples further down assume the defaults too.
+
+| Service | URL | `.env` variable |
+| --- | --- | --- |
+| WebUI | <http://localhost:5173> | `FRONTEND_PUBLISHED_PORT` |
+| API | <http://localhost:8080/api/v1> | `HOMESTR_PUBLISHED_PORT` |
+| Health probe | <http://localhost:8080/healthz> | `HOMESTR_PUBLISHED_PORT` |
+| MariaDB | `localhost:3306` | `DB_PUBLISHED_PORT` |
 
 ### Log in
 
@@ -202,6 +213,45 @@ docker compose exec db mariadb -u homestr_user -p homestr_db \
 
 ---
 
+## Working across machines, and alongside other developers
+
+Nothing machine-specific is tracked in git. `docker-compose.yml` reads every
+environment-dependent value from a variable with a working default, so the only
+file you own is your untracked `.env` — `.env.example` documents each knob.
+Moving to another machine means `git clone`, `cp .env.example .env`, and
+adjusting the handful of lines that machine forces on you.
+
+| Variable | When you change it |
+| --- | --- |
+| `VOLUME_SUFFIX` | `,z` on SELinux hosts (Fedora, RHEL, CentOS), empty on macOS, Windows and non-SELinux Linux. It is a comma option because every mount already declares `:rw` or `:ro`. |
+| `DB_PUBLISHED_PORT`, `HOMESTR_PUBLISHED_PORT`, `FRONTEND_PUBLISHED_PORT` | Something already holds the default. Only the host side moves; the ports inside the containers stay fixed, so the Vite proxy and nginx can always reach `backend:8080`. |
+| `COMPOSE_PROJECT_NAME` | You want a second, fully independent stack — another checkout, another branch, a git worktree, or a second developer on a shared host. |
+
+Container names are intentionally **not** pinned with `container_name`. Compose
+derives them from the project name, so two stacks coexist:
+
+```bash
+# terminal 1 — the default stack
+docker compose up
+
+# terminal 2 — a second, independent stack with its own database
+COMPOSE_PROJECT_NAME=homestr-wip \
+  DB_PUBLISHED_PORT=3407 HOMESTR_PUBLISHED_PORT=8180 FRONTEND_PUBLISHED_PORT=5273 \
+  docker compose up
+```
+
+Those get their own containers, network and volumes — `homestr-wip_db-data` is a
+different database from `homestr_db-data`, so one developer's schema experiment
+cannot touch another's data. Put the overrides in `.env` to make them your
+default. Tear a stack down with the same variable set, or its volumes linger:
+`COMPOSE_PROJECT_NAME=homestr-wip docker compose down -v`.
+
+Two things that are **not** portable and should never be committed:
+
+- `.env` — git-ignored, and deliberately so. Each machine has its own.
+- `frontend/node_modules` — also ignored, and the container keeps its own copy
+  in a named volume, so Linux-built binaries never leak onto a macOS host.
+
 ## Development loop
 
 | Change | What to do |
@@ -241,8 +291,16 @@ noise.
 A local MariaDB/MySQL holds the port. Set `DB_PUBLISHED_PORT=3307` in `.env`.
 
 **`permission denied` reading mounted sources (Fedora, RHEL, CentOS)**
-SELinux. Every bind mount in `docker-compose.yml` already carries `:z`; if you
-add one, it needs the same, and ad-hoc `docker run -v` commands do too.
+SELinux. Set `VOLUME_SUFFIX=,z` in `.env`. Ad-hoc `docker run -v` commands need
+`:z` on the mount themselves. Note that relabelling is persistent, so a
+directory mounted once with `z` keeps working afterwards — which can mask a
+missing label until someone clones fresh.
+
+**A mount appears empty, and the backend logs `The source directory "/app" does
+not appear to contain CMakeLists.txt`**
+`VOLUME_SUFFIX` is malformed. It must start with a comma (`,z`), not a colon:
+every mount already declares `:rw` or `:ro`, so a `:z` makes Docker read the
+whole thing as a target path.
 
 **`SELinux relabeling of / is not allowed`**
 Your `$PWD` was `/`. Use an absolute path for the mount source.
