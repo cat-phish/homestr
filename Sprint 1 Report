@@ -1,14 +1,39 @@
 # Sprint 1 Report
 Video Link:
 ## What's New (User Facing)
-* Feature 1 or Bug Fix 1
-* Feature 2 or Bug Fix 2
-* Feature n or Bug Fix n
+* We can log in to Homestr via the WebUI, although secure login is not yet implemented,
+  just dummy login.
+* The WebUI dashboard has been built out. It currently shows live online/offline status,
+  and has controls for things like adjusting light levels and colors. Controls for
+  smart speaker volume and playback is also there. None of it is functional yet,
+  because we have not implemented the APIs and actually integrated devices. Changes also
+  should appear live in all open browser windows.
+* Device registration has also been implemented. Admins can add and remove devices, while
+  regular users can only control them. Devices persist across restarts.
 ## Work Summary (Developer Facing)
-Provide a one paragraph synposis of what your team accomplished this sprint. Don't
-repeat the "What's New" list of features. Instead, help the instructor understand
-how you went about the work described there, any barriers you overcame, and any
-significant learnings for your team.
+We developed the schema first with UML diagrams, and started planning the app with User
+Stories. Then we designed the schema for the database, and we started writing out the design
+of our program, including tools, codinge style, and the description of our UML design into
+text to our CLAUDE.md file. We wrote our domain model into domain-model.md and our database
+scheme into an init.sql file. In the CLAUDE.md we explained the general system overview,
+including a breif description of the frontend, backend, and persistence implementations.
+We also included a description of our spec driven development desired workflow. We included
+our desired directory structure for the program. We also described how we wanted the program
+to build using docker. We also included our desired coding conventions for C++ and Typescript.
+And finally our aomain archetechture translated from our UML diagrams into text.
+
+This was all done before implementing any AI or agentic coding, except for some usage for
+research and troubleshooting on which tools to use to build the program. After that was all
+written we asked Claude the familiarize itself with our documentation and spot any
+potential roadblocks or inconsistencies before we started building anything. It suggested
+some small things like a few changes to our database schema that may have caused issues down
+the line, and we discussed these live over a Discord video call and decided which direction
+to go and had it make those changes to the CLAUDE.md file. Then we asked it to start
+scaffolding the project using our documentation and specs. Eventually we started adding
+fature implementations to a Roadmap.md file in the docs so that we could track implemented
+features vs yet to implement ones. Once we had a rough version of the project built
+we started implementing the ability to build the project via docker. As of now the project
+should build on any system with docker and be usable with dummy test devices in the WebUI.
 ## Unfinished Work
 If applicable, explain the work you did not finish in this sprint. For issues/user
 stories in the current sprint that have not been closed, (a) any progress toward
