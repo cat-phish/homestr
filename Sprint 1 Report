@@ -42,6 +42,15 @@ acceptance criteria), (b) a comment has been added to the issue to explain why t
 issue could not be completed (e.g., "we ran out of time" or "we did not anticipate
 it would be so much work"), and (c) the issue is added to a subsequent sprint, so
 that it can be addressed later.
+- Authentication has still not been fully implemented. You can "login" currently, but
+  it accepts any password, so not secure by any means. We decided to hold off on this
+  because we didn't want to rush it because it is a core security feature, and we
+  wanted to be sure to get it right.
+- Rules are not currently saved to the database, and they do not run on their schedule
+  triggers yet. We just ran out of time on this issue, should be fairly straight forward
+  to implement. With the most challenging part probably being making sure the triggers
+  consistently run on their schedules.
+- We also haven't fully implemented backend and front end unit tests.
 ## Completed Issues/User Stories
 Here are links to the issues that we completed in this sprint:
 * URL of issue 1
