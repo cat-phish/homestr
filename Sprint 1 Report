@@ -53,28 +53,23 @@ that it can be addressed later.
 - We also haven't fully implemented backend and front end unit tests.
 ## Completed Issues/User Stories
 Here are links to the issues that we completed in this sprint:
-* URL of issue 1
-* URL of issue 2
-* URL of issue n
-Desirables (Remove this section when you save the file):
-* Each issue should be assigned to a milestone
-* Each completed issue should be assigned to a pull request
-* Each completed pull request should include a link to a "Before and After" video
-* All team members who contributed to the issue should be assigned to it on
-GitHub
-* Each issue should be assigned story points using a label
-* Story points contribution of each team member should be indicated in a comment
+* https://github.com/cat-phish/homestr/issues/72
+* https://github.com/cat-phish/homestr/issues/70
+* https://github.com/cat-phish/homestr/issues/69
+* https://github.com/cat-phish/homestr/issues/68
+* https://github.com/cat-phish/homestr/issues/67
+* https://github.com/cat-phish/homestr/issues/66
+* https://github.com/cat-phish/homestr/issues/65
+* https://github.com/cat-phish/homestr/issues/64
+* https://github.com/cat-phish/homestr/issues/57
 ## Incomplete Issues/User Stories
 Here are links to issues we worked on but did not complete in this sprint:
-* URL of issue 1 <<One sentence explanation of why issue was not completed>>
-* URL of issue 2 <<One sentence explanation of why issue was not completed>>
-* URL of issue n <<One sentence explanation of why issue was not completed>>
-Examples of explanations (Remove this section when you save the file):
-* "We ran into a complication we did not anticipate (explain briefly)."
-* "We decided that the feature did not add sufficient value for us to work on it
-in this sprint (explain briefly)."
-* "We could not reproduce the bug" (explain briefly).
-* "We did not get to this issue because..." (explain briefly)
+* https://github.com/cat-phish/homestr/issues/58 We did not get to this feature because we decided the feature was not enough value for the amount of time we had. 
+* https://github.com/cat-phish/homestr/issues/60 We had higher priority items that we had to get done before we added this.
+* https://github.com/cat-phish/homestr/issues/56 We did not want to rush this due to it being a security feature.
+* https://github.com/cat-phish/homestr/issues/55 We completed this but we have not had the time to review it and make sure everything is good with it.
+* https://github.com/cat-phish/homestr/issues/59 We completed the dashboard and are actively using it in the project, however we just have not tested it or reviewed it yet.
+* https://github.com/cat-phish/homestr/issues/74 Same issue here, we completed this just not tested or reviewed it yet.
 ## Code Files for Review
 Please review the following code files, which were actively developed during this
 sprint, for quality:
@@ -83,14 +78,14 @@ sprint, for quality:
 * [Name of code file 3](https://github.com/your_repo/file_extension)
 ## Retrospective Summary
 Here's what went well:
-* Item 1
+* We were able to create major features, and create a dummy dashboard and application.
 * Item 2
 * Item x
 Here's what we'd like to improve:
-* Item 1
+* We would like to improve our security with our project. Since we have it pretty barebones with no security checks at this time.
 * Item 2
 * Item x
 Here are changes we plan to implement in the next sprint:
-* Item 1
+* We would like to introduce atleast one real life device and its api to connect to our project.
 * Item 2
 * Item x
