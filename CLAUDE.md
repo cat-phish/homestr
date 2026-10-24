@@ -17,6 +17,24 @@ architecture:
 
 ---
 
+## Picking Up Work
+
+- `ROADMAP.md` is the backlog and the hand-off document. Read its "Current
+  state" and "Backlog" sections before starting; its numbered steps give the
+  order of work.
+- When work lands, update the item's status in `ROADMAP.md`, and remove the
+  entry from "Open items" in `specs/domain-model.md` if it closes one, in the
+  same commit. A stale roadmap is a defect.
+- Machine-specific setup (ports, SELinux labels) belongs in your untracked
+  `.env`, never in a tracked file. `.env.example` documents every variable.
+- Unit tests run on `InMemoryDatabase` and cannot catch SQL/schema drift. After
+  touching SQL in `backend/src/services/database.cpp` or `database/init.sql`,
+  run `docker compose restart backend` and confirm the log shows
+  `[hub] household ...: N device(s) loaded` with no `[db]` lines, then log in
+  once, since login is the only read path through `findUserByEmail`.
+
+---
+
 ## Spec-Driven Development (SDD) Workflow
 
 Before generating or modifying functional code:

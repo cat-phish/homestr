@@ -11,7 +11,7 @@ changes must go through first.
 
 ## Current state
 
-As of the `feat: scaffold SDD project environment` commit.
+As of 2026-10-21 (`5f4fb69`, after the portable dev stack landed).
 
 The architecture, schema, build, container stack, tests and CI are in place and
 the stack runs end to end. It is best understood as **a working simulator of
@@ -35,6 +35,81 @@ time. "Turn on the light" currently means "record that the light is on".
 
 Every gap is also tracked under "Open items" in
 [specs/domain-model.md](specs/domain-model.md).
+
+---
+
+## Backlog
+
+The project board (To Do / In Progress / Review / Done) tracks the items below.
+This list is the record of their status: when a card moves, update its status
+here in the same commit as the work. The numbered steps further down give the
+order in which to tackle what is still open.
+
+Status meanings: **Done** is built and verified; **Review** is built but not
+yet proven; **In Progress** is partly built, with the remainder noted; **To Do**
+has nothing built yet.
+
+### 1. Infrastructure & DevOps
+
+- **Done** — Multi-container Docker Compose environment and networking.
+- **Done** — C++ (CMake) and TypeScript (Vite/lint) build pipelines.
+- **Review** — GitHub Actions CI and spec documentation. Specs are written;
+  `ci.yml` has never been confirmed green on Actions (Step 0).
+- **To Do** — Database integration test in CI (Step 3).
+
+### 2. Database & Persistence
+
+- **Done** — MariaDB relational schema (`init.sql`).
+- **In Progress** — C++ database wrapper. Device and user queries use prepared
+  statements; rule read/write methods are missing (Step 2).
+
+### 3. Authentication & Access Control (RBAC)
+
+- **In Progress** — User and Admin domain models and permissions. `isAdmin()`
+  exists; no route enforces it (Step 1).
+- **In Progress** — Login/authentication endpoints. Login only checks the user
+  exists; tokens are not validated; logout is not written (Step 1).
+- **In Progress** — Frontend login and admin user management. Login form done;
+  no token-validating auth guard, no admin screens (Step 7).
+
+### 4. Core Device Management
+
+- **Done** — `SmartDevice` base class and `Light`, `SmartSpeaker`,
+  `GenericDevice`.
+- **Done** — `DeviceManager` registry and command routing (in-memory state
+  only; real I/O is under 5).
+
+### 5. Device Discovery & Commissioning
+
+- **To Do** — Network discovery and compatibility validation (Step 5).
+- **In Progress** — Admin device registration, household association and
+  decommissioning. Backend register/unregister work; no admin guard, no UI,
+  household hard-coded (Steps 1, 6, 7).
+- **To Do** — Device driver layer and protocol integration (Step 5).
+- **To Do** — Device health and status monitoring (Step 5).
+
+### 6. Dashboard & Real-Time Control
+
+- **Done** — REST/WebSocket endpoints for device state and commands.
+- **Done** — Dashboard grid and device control cards.
+
+### 7. Automation Engine
+
+- **In Progress** — `AutomationRule` model and execution. `evaluate()` works;
+  no scheduler, no device-state triggers, no recursion guard (Step 4).
+- **To Do** — Rule persistence and frontend rule configurator (Steps 2, 7).
+
+### 8. Testing & Quality Assurance
+
+- **In Progress** — C++ GoogleTest units. 37 cases, all on `InMemoryDatabase`.
+- **In Progress** — Vitest units and end-to-end flows. 13 Vitest cases; no
+  end-to-end tests.
+
+### 9. Households & Security
+
+- **To Do** — Households and per-user device assignment (Step 6).
+- **To Do** — Security hardening: CORS, login rate limiting, admin hash
+  rotation (Step 1 and "Smaller items").
 
 ---
 
