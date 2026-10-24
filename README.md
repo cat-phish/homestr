@@ -120,7 +120,7 @@ unreachable path — the WebUI greys it out and the API answers `409`.
 
 ### Automated tests
 
-**Backend — 37 GoogleTest cases, no database needed.** They run against
+**Backend — 113 GoogleTest cases, no database needed.** They run against
 `InMemoryDatabase`, so they are fast and hermetic:
 
 ```bash

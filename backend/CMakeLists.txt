@@ -170,7 +170,11 @@ if(HOMESTR_BUILD_TESTS)
 
   add_executable(homestr_tests tests/device_manager_test.cpp
                                tests/automation_rule_test.cpp
+                               tests/database_test.cpp
                                tests/home_str_test.cpp
+                               tests/light_test.cpp
+                               tests/smart_device_test.cpp
+                               tests/smart_speaker_test.cpp
                                tests/user_test.cpp)
 
   target_link_libraries(homestr_tests PRIVATE homestr_core GTest::gtest_main

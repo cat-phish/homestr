@@ -31,7 +31,7 @@ time. "Turn on the light" currently means "record that the light is on".
 | Audit trail in `device_events`, failures included | LAN discovery returns an empty list |
 | Dashboard aggregate and WebSocket push | Cron scheduler never ticks; `evaluate()` is only reached via the manual trigger endpoint |
 | Rule create / enable / disable / manual trigger | Rules are in memory only and vanish on restart |
-| 37 GoogleTest + 13 Vitest cases, green | Per-user device assignment; single hard-coded household |
+| 113 GoogleTest + 13 Vitest cases, green | Per-user device assignment; single hard-coded household |
 
 Every gap is also tracked under "Open items" in
 [specs/domain-model.md](specs/domain-model.md).
@@ -101,7 +101,10 @@ has nothing built yet.
 
 ### 8. Testing & Quality Assurance
 
-- **In Progress** — C++ GoogleTest units. 37 cases, all on `InMemoryDatabase`.
+- **In Progress** — C++ GoogleTest units. 113 cases, all on `InMemoryDatabase`;
+  the device hierarchy, `User`, `AutomationRule` and the `InMemoryDatabase` /
+  `DatabaseConfig` / `UserRecord` layer are covered. `MariaDbDatabase` SQL is
+  not (Step 3).
 - **In Progress** — Vitest units and end-to-end flows. 13 Vitest cases; no
   end-to-end tests.
 
