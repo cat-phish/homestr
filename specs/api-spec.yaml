@@ -39,7 +39,8 @@ paths:
       summary: Authenticate a user and open a session
       description: |
         Verifies the password against `users.password_hash` and returns a bearer
-        token recorded in `sessions`. The only unauthenticated endpoint.
+        token whose SHA-256 hash is recorded in `sessions`, expiring after 24 hours.
+        The only unauthenticated API endpoint. Passwords use Argon2id.
       security: []
       operationId: login
       requestBody:
@@ -57,6 +58,7 @@ paths:
                   type: string
                   format: password
                   minLength: 8
+                  maxLength: 1024
             example:
               email: admin@homestr.local
               password: correct-horse-battery-staple
@@ -76,6 +78,21 @@ paths:
                     $ref: '#/components/schemas/User'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Validate the current session and return its user
+      operationId: currentUser
+      responses:
+        '200':
+          description: Current authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -171,7 +188,7 @@ paths:
     get:
       tags: [Devices]
       summary: Devices seen on the LAN but not yet registered
-      description: Triggers an mDNS/SSDP sweep and returns the candidates.
+      description: Administrator operation. Triggers an mDNS/SSDP sweep and returns the candidates.
       operationId: discoverDevices
       responses:
         '200':
@@ -186,6 +203,8 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/DiscoveredDevice'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -427,6 +446,11 @@ paths:
           * `{"type":"device_state","device":<Device>}` on every state change
           * `{"type":"pong"}` in reply to the client's `ping` keep-alive
 
+        Browsers offer subprotocols `homestr` and `bearer.<token>`; the server
+        selects `homestr`. Authorization: Bearer is also accepted for non-browser
+        clients. Tokens must not appear in URLs. Invalid sessions are rejected
+        before upgrade; active connections close with code 4001 on expiration or
+        revocation, checked every second and before sending data.
         The channel is push-only: `ping` is the only frame a client sends.
       operationId: openWebSocket
       responses:

@@ -6,6 +6,9 @@
 #include <thread>
 
 #include <crow.h>
+#include <sodium.h>
+#include <termios.h>
+#include <unistd.h>
 
 #include "homestr/controllers/api_controller.hpp"
 #include "homestr/services/database.hpp"
@@ -18,7 +21,7 @@ constexpr int DB_CONNECT_ATTEMPTS = 30;
 constexpr std::chrono::seconds DB_RETRY_DELAY{2};
 
 // Seeded household for local development; multi-household selection comes from
-// the session once the auth middleware lands.
+// the session once multi-household selection is implemented.
 constexpr const char* DEFAULT_HOUSEHOLD = "00000000-0000-0000-0000-0000000000a1";
 
 int portFromEnvironment() {
@@ -32,7 +35,12 @@ int portFromEnvironment() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  const bool setPassword = argc == 2 && std::string{argv[1]} == "--set-admin-password";
+  if (argc > 1 && !setPassword) {
+    std::cerr << "Usage: homestr_server [--set-admin-password]\n";
+    return 1;
+  }
   const homestr::DatabaseConfig config = homestr::DatabaseConfig::fromEnvironment();
   homestr::HomeStr hub{homestr::makeDatabase(config)};
 
@@ -51,6 +59,50 @@ int main() {
   if (!started) {
     std::cerr << "[hub] giving up: cannot reach " << config.connectionUrl() << '\n';
     return 1;
+  }
+
+  if (setPassword) {
+    termios original{};
+    const bool terminal = isatty(STDIN_FILENO) != 0;
+    if (terminal) {
+      if (tcgetattr(STDIN_FILENO, &original) != 0) {
+        return 1;
+      }
+      termios hidden = original;
+      hidden.c_lflag &= static_cast<tcflag_t>(~ECHO);
+      if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &hidden) != 0) {
+        return 1;
+      }
+    }
+    std::string password;
+    std::string confirmation;
+    std::cerr << "New administrator password: ";
+    std::getline(std::cin, password);
+    std::cerr << "\nConfirm password: ";
+    std::getline(std::cin, confirmation);
+    if (terminal) {
+      tcsetattr(STDIN_FILENO, TCSAFLUSH, &original);
+    }
+    std::cerr << '\n';
+    bool saved = false;
+    try {
+      if (!std::cin || password != confirmation) {
+        std::cerr << "Passwords do not match or input ended.\n";
+      } else {
+        const auto admin = hub.database().findUserByEmail("admin@homestr.local");
+        if (admin && admin->role == "admin") {
+          saved = hub.database().updatePasswordHash(admin->email,
+                                                    homestr::AuthService::hashPassword(password));
+        }
+      }
+    } catch (const std::exception& error) {
+      std::cerr << error.what() << '\n';
+    }
+    sodium_memzero(password.data(), password.size());
+    sodium_memzero(confirmation.data(), confirmation.size());
+    std::cerr << (saved ? "Administrator password updated; sessions revoked.\n"
+                        : "Administrator password was not changed.\n");
+    return saved ? 0 : 1;
   }
 
   homestr::App app;

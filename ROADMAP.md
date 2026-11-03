@@ -11,7 +11,7 @@ changes must go through first.
 
 ## Current state
 
-As of 2026-10-21 (`5f4fb69`, after the portable dev stack landed).
+As of 2026-11-02, after secure authentication and session handling.
 
 The architecture, schema, build, container stack, tests and CI are in place and
 the stack runs end to end. It is best understood as **a working simulator of
@@ -25,13 +25,13 @@ time. "Turn on the light" currently means "record that the light is on".
 
 | Working | Stubbed |
 | --- | --- |
-| MariaDB schema, seed, first-boot init | Password verification — login accepts any non-empty password for a known email |
-| Device registration/unregistration, persisted and reloaded on restart | Bearer tokens issued but **not enforced on any route**, including the WebSocket |
+| MariaDB schema, seed, first-boot init; Argon2id password verification | Frontend device onboarding and rule editor |
+| Persisted sessions, REST/WebSocket authorization, logout, admin device guards | Household scoping and per-device permissions |
 | Commands applied to the model and persisted to the subtype tables | No device I/O at all — no driver, no network |
 | Audit trail in `device_events`, failures included | LAN discovery returns an empty list |
 | Dashboard aggregate and WebSocket push | Cron scheduler never ticks; `evaluate()` is only reached via the manual trigger endpoint |
 | Rule create / enable / disable / manual trigger | Rules are in memory only and vanish on restart |
-| 113 GoogleTest + 13 Vitest cases, green | Per-user device assignment; single hard-coded household |
+| Backend and frontend unit suites; disposable-stack auth smoke test | Single hard-coded household |
 
 Every gap is also tracked under "Open items" in
 [specs/domain-model.md](specs/domain-model.md).
@@ -65,12 +65,11 @@ has nothing built yet.
 
 ### 3. Authentication & Access Control (RBAC)
 
-- **In Progress** — User and Admin domain models and permissions. `isAdmin()`
-  exists; no route enforces it (Step 1).
-- **In Progress** — Login/authentication endpoints. Login only checks the user
-  exists; tokens are not validated; logout is not written (Step 1).
-- **In Progress** — Frontend login and admin user management. Login form done;
-  no token-validating auth guard, no admin screens (Step 7).
+- **Done** — Password verification, persisted expiring sessions, REST/WebSocket
+  session enforcement, logout revocation, and administrator device guards (Step 1).
+- **Done** — Frontend session validation and return to sign-in on expiration.
+- **To Do** — Admin user management screens (Step 7); household and per-device
+  permissions (Step 6).
 
 ### 4. Core Device Management
 
@@ -83,8 +82,8 @@ has nothing built yet.
 
 - **To Do** — Network discovery and compatibility validation (Step 5).
 - **In Progress** — Admin device registration, household association and
-  decommissioning. Backend register/unregister work; no admin guard, no UI,
-  household hard-coded (Steps 1, 6, 7).
+  decommissioning. Backend register/unregister and admin guards work; no UI,
+  household hard-coded (Steps 6, 7).
 - **To Do** — Device driver layer and protocol integration (Step 5).
 - **To Do** — Device health and status monitoring (Step 5).
 
@@ -101,18 +100,18 @@ has nothing built yet.
 
 ### 8. Testing & Quality Assurance
 
-- **In Progress** — C++ GoogleTest units. 113 cases, all on `InMemoryDatabase`;
-  the device hierarchy, `User`, `AutomationRule` and the `InMemoryDatabase` /
-  `DatabaseConfig` / `UserRecord` layer are covered. `MariaDbDatabase` SQL is
-  not (Step 3).
-- **In Progress** — Vitest units and end-to-end flows. 13 Vitest cases; no
-  end-to-end tests.
+- **In Progress** — C++ GoogleTest units cover domain models, database fakes,
+  authentication, and middleware. `scripts/test-auth.py` verifies auth SQL,
+  device reload, and WebSockets against a disposable MariaDB stack. Integration
+  coverage still needs to run in CI (Step 3).
+- **In Progress** — Vitest covers device cards, API requests, frontend session
+  handling, and WebSocket authentication. Browser end-to-end coverage remains open.
 
 ### 9. Households & Security
 
 - **To Do** — Households and per-user device assignment (Step 6).
-- **To Do** — Security hardening: CORS, login rate limiting, admin hash
-  rotation (Step 1 and "Smaller items").
+- **To Do** — Security hardening: CORS and login rate limiting ("Smaller items").
+- **Done** — Interactive administrator password setup/reset with session revocation.
 
 ---
 
@@ -129,32 +128,28 @@ run locally and never under GitHub Actions:
 
 Fix what those surface and merge, so everyone branches from a known-good main.
 
-## Step 1 — Authentication
+## Step 1 — Authentication — Done
 
-First, because it is the only item that is a *defect* rather than a missing
-feature, and because several later steps depend on having a resolved user.
+- [x] libsodium Argon2id password hashing and verification; no default password.
+- [x] `AuthService`: login, random token issuance, SHA-256 token hashes, persisted
+      24-hour sessions, validation, and logout revocation.
+- [x] Crow middleware resolving bearer tokens to users; protected REST routes
+      return 401, administrator device operations return 403 for non-admins.
+- [x] Browser WebSocket authentication through subprotocols, with no tokens in
+      URLs or echoed protocol headers. Connections close on expiry/revocation.
+- [x] Resolved user IDs recorded for direct device commands.
+- [x] `POST /auth/logout` and `GET /auth/me`; frontend session validation,
+      expiration handling, and server-side logout.
+- [x] Interactive `homestr_server --set-admin-password` command for new and
+      existing databases. Resetting a password revokes all that user's sessions
+      and prevents in-flight logins from issuing sessions with the old hash.
+- [x] Unit coverage for credentials, expiry, revocation, middleware, roles, and
+      frontend session handling; disposable-stack smoke coverage for MariaDB,
+      restart persistence, audit attribution, and WebSocket lifecycle.
 
-- [ ] Choose a hashing library. **libsodium** (`libsodium-dev`, argon2id) is
-      preferred over bcrypt: apt-available, so unlike the MariaDB connector it
-      needs no source build.
-- [ ] `services/auth_service.{hpp,cpp}`: `hashPassword`, `verifyPassword`,
-      `issueSession`, `validateSession`. The `sessions` table already exists
-      and expects a SHA-256 of the bearer token.
-- [ ] Crow middleware resolving `Authorization: Bearer` to a user, 401 on
-      failure. Cover the WebSocket route too.
-- [ ] Thread the resolved user id into `sendCommand`'s `actorId`, which is
-      always empty today, so every audit row reads `SYSTEM` instead of naming
-      the user who acted.
-- [ ] Admin guard (403) on device register/unregister. `api-spec.yaml`
-      documents these as admin-only; nothing enforces it.
-- [ ] Implement `POST /auth/logout` — specced, never written.
-- [ ] Rotate the placeholder admin hash in `init.sql` and provide a way to set
-      a real password.
-- [ ] Tests: hash round-trip, expired token, 401 on missing token, 403 on
-      non-admin.
-
-`api-spec.yaml` already describes these responses, so this step is mostly
-making reality match the spec.
+Setup and reset instructions are in [README.md](README.md#log-in). Household
+isolation and per-device permissions remain Step 6; login rate limiting and CORS
+restrictions remain under Smaller items.
 
 ## Step 2 — Rule persistence
 
@@ -228,8 +223,8 @@ Where the project stops being a simulation. Write the spec before the code.
 
 ## Step 7 — Frontend buildout
 
-- [ ] Router and an auth guard that *validates* the token, rather than checking
-      that something is present in `localStorage`.
+- [x] Auth guard validating the stored token and handling expired sessions.
+- [ ] Router for additional screens.
 - [ ] Admin screens: register from discovery results, user management.
 - [ ] Rule editor.
 - [ ] A real error surface; errors currently land in a single `role="alert"`

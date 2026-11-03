@@ -5,6 +5,7 @@
 #
 #   ./scripts/seed-demo.sh                        # against localhost:8080
 #   BASE_URL=http://host:8080/api/v1 ./scripts/seed-demo.sh
+# Prompts for the administrator password unless HOMESTR_TOKEN is provided.
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8080/api/v1}"
@@ -16,15 +17,42 @@ if ! curl -sf "${BASE_URL%/api/v1}/healthz" >/dev/null; then
   exit 1
 fi
 
+# Keep credentials out of shell arguments and history. The optional supplied
+# token can be reused by callers; a session created here is revoked on exit.
+TOKEN="${HOMESTR_TOKEN:-}"
+if [[ -z "${TOKEN}" ]]; then
+  TOKEN=$(python3 - "${BASE_URL}" <<'PYLOGIN'
+import getpass
+import json
+import os
+import sys
+import urllib.request
+
+payload = json.dumps({
+    'email': os.environ.get('HOMESTR_EMAIL', 'admin@homestr.local'),
+    'password': getpass.getpass('Administrator password: '),
+}).encode()
+request = urllib.request.Request(sys.argv[1] + '/auth/login', data=payload,
+                                 headers={'Content-Type': 'application/json'})
+try:
+    with urllib.request.urlopen(request, timeout=10) as response:
+        print(json.load(response)['token'])
+except Exception:
+    raise SystemExit('Could not sign in. Check the credentials and hub connection.')
+PYLOGIN
+  )
+  trap 'curl -s -o /dev/null -X POST "${BASE_URL}/auth/logout" -H "Authorization: Bearer ${TOKEN}" || true' EXIT
+fi
+
 # post <path> <json> <label>
 post() {
   local status
   status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE_URL}$1" \
-    -H 'Content-Type: application/json' -d "$2")
+    -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' -d "$2")
   case "${status}" in
     20*) printf '  %-24s created\n' "$3" ;;
     409) printf '  %-24s exists\n' "$3" ;;
-    *) printf '  %-24s FAILED (HTTP %s)\n' "$3" "${status}" ;;
+    *) printf '  %-24s FAILED (HTTP %s)\n' "$3" "${status}"; return 1 ;;
   esac
 }
 
@@ -84,4 +112,4 @@ post /rules "{
 
 echo
 echo "Done. Open the WebUI, or inspect the payload:"
-echo "  curl -s ${BASE_URL}/dashboard | python3 -m json.tool"
+echo "  GET ${BASE_URL}/dashboard with an Authorization: Bearer token header"

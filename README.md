@@ -76,9 +76,19 @@ At the default ports — substitute your own if you changed them in `.env`. The
 
 ### Log in
 
-`admin@homestr.local` with **any non-empty password**. Password verification is
-not implemented yet (see [What works today](#what-works-today)); the endpoint
-only checks that the user exists.
+Set the administrator password once, then sign in as `admin@homestr.local`:
+
+```bash
+docker compose exec backend /app/build/homestr_server --set-admin-password
+```
+
+The command prompts twice without echoing the password. Use 8–1024 bytes. It
+also works with existing database volumes and revokes existing administrator
+sessions. No default password is shipped; old placeholder hashes cannot sign in.
+You can run the same command again to reset the password.
+
+Sessions expire after 24 hours. Sign out revokes the current session on the hub.
+The dashboard validates stored sessions and returns to sign-in on expiration.
 
 ### Get some devices on the dashboard
 
@@ -89,7 +99,10 @@ devices and one automation rule:
 ./scripts/seed-demo.sh
 ```
 
-Re-running it is safe — existing devices report `exists` rather than erroring.
+The script prompts for the administrator password and revokes its temporary
+session when it finishes. Alternatively, provide `HOMESTR_TOKEN` with an existing
+admin bearer token. Re-running it is safe — existing devices report `exists`
+rather than erroring.
 
 ---
 
@@ -97,15 +110,15 @@ Re-running it is safe — existing devices report `exists` rather than erroring.
 
 | Working | Stubbed / not built |
 | --- | --- |
-| MariaDB schema, seed data, migrations-on-first-boot | Password hashing and verification — login accepts any non-empty password for a known email |
-| Device registration and unregistration, persisted | Bearer tokens are issued but **not enforced** on any route |
+| Argon2id password verification, persisted 24-hour sessions, logout revocation | Multi-household support — the hub loads one hard-coded household at boot |
+| Bearer-token enforcement on REST and WebSocket; admin-only device setup | Device health monitoring and physical device communication |
 | Device commands: `turnOn`, `turnOff`, `setBrightness`, `setColor`, `play`, `pause`, `setVolume`, `connect` | LAN discovery — `GET /devices/discover` returns an empty list, no mDNS/SSDP sweep |
 | Device state persisted to the subtype tables and reloaded on restart | Cron scheduler — `SCHEDULE` rules never fire on their own, only via the manual trigger endpoint |
 | Audit trail in `device_events`, including failed commands | Automation rules live in memory only; they are **not** persisted and vanish on restart |
 | Dashboard aggregate, WebSocket push on every state change | Per-user device assignment — any authenticated caller can command any device in the household |
-| Rule create / enable / disable / manual trigger | Multi-household support — the hub loads one hard-coded household at boot |
+| Device registration and removal; rule create / enable / disable / manual trigger | Frontend rule editor and device setup screens |
 
-Every gap above is tracked under "Open items" in
+Core backend gaps above are tracked under "Open items" in
 [`specs/domain-model.md`](specs/domain-model.md), and sequenced into work items
 in [ROADMAP.md](ROADMAP.md). Add to those lists rather than widening scope
 silently.
@@ -120,7 +133,7 @@ unreachable path — the WebUI greys it out and the API answers `409`.
 
 ### Automated tests
 
-**Backend — 113 GoogleTest cases, no database needed.** They run against
+**Backend — GoogleTest suites, no database needed.** They run against
 `InMemoryDatabase`, so they are fast and hermetic:
 
 ```bash
@@ -133,12 +146,13 @@ The named `/build` volume keeps the fetched dependencies between runs. On a
 host with CMake and a C++20 compiler you can skip Docker entirely:
 
 ```bash
+# Install libsodium development headers and pkg-config first.
 cmake -B backend/build -S backend -DCMAKE_BUILD_TYPE=Debug -DHOMESTR_WITH_MARIADB=OFF
 cmake --build backend/build -j"$(nproc)"
 ctest --test-dir backend/build --output-on-failure
 ```
 
-**Frontend — 13 Vitest cases:**
+**Frontend — Vitest suites:**
 
 ```bash
 cd frontend
@@ -161,10 +175,15 @@ device cards and one rule:
 | Porch Light (offline) | Greyed out, every control disabled |
 | Rule "Lights out at 22:00" | Enable/Disable toggle |
 
+**Authenticated API examples.** Set `HOMESTR_TOKEN` to a token returned by
+`POST /api/v1/auth/login` with your email and password. Every API request below
+requires that token; `/healthz` remains public. Do not commit tokens or credentials.
+
 **Live push.** Leave the dashboard open in a browser and run:
 
 ```bash
 curl -s -X POST localhost:8080/api/v1/devices/11111111-0000-4000-8000-000000000001/commands \
+  -H "Authorization: Bearer ${HOMESTR_TOKEN}" \
   -H 'Content-Type: application/json' -d '{"command":"setBrightness","params":{"level":15}}'
 ```
 
@@ -174,7 +193,8 @@ polling.
 **Rule execution** dispatches through the hub to the device:
 
 ```bash
-curl -s -X POST localhost:8080/api/v1/rules/55555555-0000-4000-8000-000000000005/trigger
+curl -s -X POST localhost:8080/api/v1/rules/55555555-0000-4000-8000-000000000005/trigger \
+  -H "Authorization: Bearer ${HOMESTR_TOKEN}"
 ```
 
 Returns the fired rule id; the kitchen light turns off in the UI.
@@ -184,10 +204,12 @@ Returns the fired rule id; the kitchen light turns off in the UI.
 ```bash
 # 409: command not supported by that device type
 curl -s -X POST localhost:8080/api/v1/devices/33333333-0000-4000-8000-000000000003/commands \
+  -H "Authorization: Bearer ${HOMESTR_TOKEN}" \
   -H 'Content-Type: application/json' -d '{"command":"setBrightness","params":{"level":50}}'
 
 # 409: device unreachable
 curl -s -X POST localhost:8080/api/v1/devices/44444444-0000-4000-8000-000000000004/commands \
+  -H "Authorization: Bearer ${HOMESTR_TOKEN}" \
   -H 'Content-Type: application/json' -d '{"command":"turnOn"}'
 ```
 
@@ -353,5 +375,19 @@ scripts/            seed-demo.sh
 | `schema` | Applies `init.sql` to a clean MariaDB 11.4 |
 | `docker` | Builds both release images (which run the tests inside) |
 
-CI does not yet run an integration test across the three containers, which is
-why the manual persistence check above matters when you touch a SQL query.
+CI does not yet run an integration test across the three containers. The auth
+smoke test has a separate **disposable** Compose stack with its own database
+and build volumes. It binds the API only to loopback on port 48080 (override with
+`HOMESTR_AUTH_TEST_PORT` if needed):
+
+```bash
+docker compose -f docker-compose.auth-test.yml up -d --build --wait --wait-timeout 300
+python3 scripts/test-auth.py docker-compose.auth-test.yml http://localhost:48080
+docker compose -f docker-compose.auth-test.yml down -v
+```
+
+It sets the test administrator password and inserts test records, then checks
+route permissions, audit attribution, WebSocket authentication and revocation,
+expiry, and session/device persistence across a backend restart. Do not point it
+at a database you use. The manual persistence check above remains useful for
+other SQL changes.

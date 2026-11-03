@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -51,6 +53,12 @@ struct UserRecord {
   User toUser() const;
 };
 
+struct SessionRecord {
+  std::string tokenHash;
+  std::string userId;
+  std::int64_t expiresAt = 0;
+};
+
 // Persistence boundary. Controllers and services depend on this interface only,
 // so unit tests can substitute the in-memory implementation.
 class Database {
@@ -64,6 +72,12 @@ class Database {
   virtual bool isConnected() const = 0;
 
   virtual std::optional<UserRecord> findUserByEmail(const std::string& email) = 0;
+
+  virtual bool updatePasswordHash(const std::string& email, const std::string& hash) = 0;
+  virtual bool saveSession(const SessionRecord& session, const std::string& verifiedHash) = 0;
+  virtual std::optional<UserRecord> findSessionUser(const std::string& tokenHash,
+                                                    std::int64_t now) = 0;
+  virtual bool deleteSession(const std::string& tokenHash) = 0;
 
   virtual std::vector<DeviceRecord> listDevices(const std::string& householdId) = 0;
 
@@ -88,6 +102,11 @@ class InMemoryDatabase : public Database {
   bool connect() override;
   bool isConnected() const override;
   std::optional<UserRecord> findUserByEmail(const std::string& email) override;
+  bool updatePasswordHash(const std::string& email, const std::string& hash) override;
+  bool saveSession(const SessionRecord& session, const std::string& verifiedHash) override;
+  std::optional<UserRecord> findSessionUser(const std::string& tokenHash,
+                                            std::int64_t now) override;
+  bool deleteSession(const std::string& tokenHash) override;
   std::vector<DeviceRecord> listDevices(const std::string& householdId) override;
   std::optional<DeviceRecord> findDevice(const std::string& deviceId) override;
   bool saveDevice(const DeviceRecord& record) override;
@@ -98,9 +117,14 @@ class InMemoryDatabase : public Database {
 
   void addUser(UserRecord record);
 
-  std::size_t event_count() const noexcept { return events_.size(); }
+  std::size_t event_count() const noexcept {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return events_.size();
+  }
 
  private:
+  mutable std::recursive_mutex mutex_;
+  std::vector<SessionRecord> sessions_;
   bool connected_ = false;
   std::vector<UserRecord> users_;
   std::vector<DeviceRecord> devices_;

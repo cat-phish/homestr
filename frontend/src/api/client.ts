@@ -1,4 +1,11 @@
-import type { AutomationRule, Dashboard, Device, DeviceRegistration, LoginResponse } from '@/types';
+import type {
+  AutomationRule,
+  Dashboard,
+  Device,
+  DeviceRegistration,
+  LoginResponse,
+  User,
+} from '@/types';
 
 /**
  * Thin REST client for the C++ hub. In dev the default base URL is relative so
@@ -24,6 +31,13 @@ export const setToken = (token: string): void => localStorage.setItem(TOKEN_KEY,
 
 export const clearToken = (): void => localStorage.removeItem(TOKEN_KEY);
 
+export function invalidateSession(expectedToken: string | null = getToken()): void {
+  if (getToken() === expectedToken) {
+    clearToken();
+    window.dispatchEvent(new Event('homestr:unauthorized'));
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers = new Headers(init.headers);
@@ -31,11 +45,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.body !== undefined) {
     headers.set('Content-Type', 'application/json');
   }
-  if (token !== null) {
+  if (token !== null && path !== '/auth/login') {
     headers.set('Authorization', `Bearer ${token}`);
   }
 
   const response = await fetch(`${BASE_URL}${path}`, { ...init, headers });
+
+  if (response.status === 401 && path !== '/auth/login') {
+    invalidateSession(token);
+  }
 
   if (response.status === 204) {
     return undefined as T;
@@ -66,9 +84,13 @@ export const api = {
     return result;
   },
 
-  logout(): void {
-    clearToken();
+  async logout(): Promise<void> {
+    const token = getToken();
+    await request<void>('/auth/logout', { method: 'POST' });
+    invalidateSession(token);
   },
+
+  me: (): Promise<User> => request<User>('/auth/me'),
 
   getDashboard: (): Promise<Dashboard> => request<Dashboard>('/dashboard'),
 

@@ -132,3 +132,37 @@ describe('api.listRules', () => {
     expect(rules[0]?.triggerType).toBe('SCHEDULE');
   });
 });
+
+describe('session lifecycle', () => {
+  beforeEach(clearToken);
+
+  it('invalidates authentication on a protected 401', async () => {
+    localStorage.setItem('homestr.token', 'expired-token');
+    const listener = vi.fn();
+    window.addEventListener('homestr:unauthorized', listener);
+    stubFetch(jsonResponse({ error: 'authentication required' }, 401));
+    await expect(api.getDashboard()).rejects.toThrowError(ApiError);
+    expect(getToken()).toBeNull();
+    expect(listener).toHaveBeenCalledOnce();
+    window.removeEventListener('homestr:unauthorized', listener);
+  });
+
+  it('revokes the server session before clearing the local token', async () => {
+    localStorage.setItem('homestr.token', 'active-token');
+    const fetchMock = stubFetch(new Response(null, { status: 204 }));
+    await api.logout();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/auth/logout');
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('POST');
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe(
+      'Bearer active-token',
+    );
+    expect(getToken()).toBeNull();
+  });
+
+  it('retains the token when logout fails so it can be retried', async () => {
+    localStorage.setItem('homestr.token', 'active-token');
+    stubFetch(jsonResponse({ error: 'could not close session' }, 503));
+    await expect(api.logout()).rejects.toThrowError(ApiError);
+    expect(getToken()).toBe('active-token');
+  });
+});

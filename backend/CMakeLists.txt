@@ -92,6 +92,8 @@ foreach(crowTarget Crow crow)
 endforeach()
 
 find_package(Threads REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
 
 # MariaDB Connector/C++ -- optional so unit tests need no database.
 set(HOMESTR_MARIADB_AVAILABLE OFF)
@@ -124,12 +126,13 @@ add_library(
   src/models/smart_speaker.cpp
   src/models/automation_rule.cpp
   src/services/device_manager.cpp
+  src/services/auth_service.cpp
   src/services/database.cpp
   src/services/home_str.cpp)
 
 target_include_directories(homestr_core PUBLIC include)
 target_link_libraries(homestr_core PUBLIC nlohmann_json::nlohmann_json
-                                          Threads::Threads
+                                          Threads::Threads PkgConfig::SODIUM
                                    PRIVATE homestr_warnings)
 
 if(HOMESTR_MARIADB_AVAILABLE)
@@ -168,7 +171,9 @@ if(HOMESTR_BUILD_TESTS)
 
   include(GoogleTest)
 
-  add_executable(homestr_tests tests/device_manager_test.cpp
+  add_executable(homestr_tests tests/auth_service_test.cpp
+                               tests/auth_middleware_test.cpp
+                               tests/device_manager_test.cpp
                                tests/automation_rule_test.cpp
                                tests/database_test.cpp
                                tests/home_str_test.cpp
@@ -177,7 +182,7 @@ if(HOMESTR_BUILD_TESTS)
                                tests/smart_speaker_test.cpp
                                tests/user_test.cpp)
 
-  target_link_libraries(homestr_tests PRIVATE homestr_core GTest::gtest_main
+  target_link_libraries(homestr_tests PRIVATE homestr_core Crow::Crow GTest::gtest_main
                                               GTest::gmock homestr_warnings)
 
   gtest_discover_tests(homestr_tests DISCOVERY_TIMEOUT 30)

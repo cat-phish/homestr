@@ -2,25 +2,26 @@
 
 #include <mutex>
 #include <string>
-#include <unordered_set>
+#include <unordered_map>
 
 #include <crow.h>
 #include <crow/middlewares/cors.h>
 
+#include "homestr/controllers/auth_middleware.hpp"
 #include "homestr/services/home_str.hpp"
 
 namespace homestr {
 
 // CORS is required because the Vite dev server runs on a different origin
 // (localhost:5173) from the API (localhost:8080).
-using App = crow::App<crow::CORSHandler>;
+using App = crow::App<crow::CORSHandler, AuthMiddleware>;
 
 // REST + WebSocket surface described by specs/api-spec.yaml. The controller
-// holds no state of its own beyond the WebSocket subscriber set; all domain
-// behaviour lives in HomeStr.
+// owns authentication and WebSocket subscriptions; domain behavior lives in
+// HomeStr.
 class ApiController {
  public:
-  explicit ApiController(HomeStr& hub) : hub_(hub) {}
+  explicit ApiController(HomeStr& hub) : hub_(hub), auth_(hub.database()) {}
 
   // Binds every route onto `app`. Call once, before app.run().
   void registerRoutes(App& app);
@@ -29,9 +30,11 @@ class ApiController {
   void broadcast(const std::string& payload);
 
  private:
+  void expireClients();
   HomeStr& hub_;
+  AuthService auth_;
   std::mutex clientsMutex_;
-  std::unordered_set<crow::websocket::connection*> clients_;
+  std::unordered_map<crow::websocket::connection*, std::string> clients_;
 };
 
 }  // namespace homestr

@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
     id            VARCHAR(36)  NOT NULL PRIMARY KEY,
     name          VARCHAR(100) NOT NULL,
     email         VARCHAR(255) NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,  -- bcrypt/argon2; never a plaintext password
+    password_hash VARCHAR(255) NOT NULL,  -- Argon2id; never a plaintext password
     role          ENUM('user', 'admin') NOT NULL DEFAULT 'user',
     created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -167,13 +167,13 @@ CREATE TABLE IF NOT EXISTS device_events (
 -- Seed data (development only)
 -- ---------------------------------------------------------------------------
 
--- Placeholder hash. Rotate before any non-local deployment:
---   the backend rejects login while the hash is not a valid bcrypt digest.
+-- No default password. Set one using homestr_server --set-admin-password.
+-- An empty hash cannot authenticate; reapplying this seed preserves credentials.
 INSERT INTO users (id, name, email, password_hash, role)
 VALUES ('00000000-0000-0000-0000-000000000001',
         'System Administrator',
         'admin@homestr.local',
-        '$2a$12$REPLACE.THIS.PLACEHOLDER.HASH.BEFORE.DEPLOYMENT.0000000',
+        '',
         'admin')
 ON DUPLICATE KEY UPDATE name = VALUES(name);
 

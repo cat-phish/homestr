@@ -1,5 +1,7 @@
 #include "homestr/controllers/api_controller.hpp"
 
+#include <chrono>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -41,12 +43,27 @@ std::optional<nlohmann::json> parseBody(const crow::request& request) {
 
 void ApiController::broadcast(const std::string& payload) {
   const std::lock_guard<std::mutex> lock(clientsMutex_);
-  for (crow::websocket::connection* client : clients_) {
-    client->send_text(payload);
+  for (const auto& [client, hash] : clients_) {
+    if (auth_.validateHash(hash)) {
+      client->send_text(payload);
+    } else {
+      client->close("Session expired", 4001);
+    }
+  }
+}
+
+void ApiController::expireClients() {
+  const std::lock_guard<std::mutex> lock(clientsMutex_);
+  for (const auto& [client, hash] : clients_) {
+    if (!auth_.validateHash(hash)) {
+      client->close("Session expired", 4001);
+    }
   }
 }
 
 void ApiController::registerRoutes(App& app) {
+  app.get_middleware<AuthMiddleware>().auth = &auth_;
+  app.tick(std::chrono::seconds(1), [this] { expireClients(); });
   // --- Health -------------------------------------------------------------
   CROW_ROUTE(app, "/healthz")
   ([this] {
@@ -55,30 +72,47 @@ void ApiController::registerRoutes(App& app) {
   });
 
   // --- Login --------------------------------------------------------------
-  // Password verification is stubbed: hashing belongs to the auth service,
-  // which is the next spec item. Until then the endpoint only proves the user
-  // exists and never accepts an empty password.
   CROW_ROUTE(app, "/api/v1/auth/login")
       .methods(crow::HTTPMethod::POST)([this](const crow::request& request) {
         const std::optional<nlohmann::json> body = parseBody(request);
         if (!body) {
           return errorResponse(400, "malformed JSON body");
         }
+        if (!body->contains("email") || !(*body)["email"].is_string() ||
+            !body->contains("password") || !(*body)["password"].is_string()) {
+          return errorResponse(400, "email and password must be strings");
+        }
         const std::string email = body->value("email", std::string{});
         const std::string password = body->value("password", std::string{});
-        if (email.empty() || password.empty()) {
-          return errorResponse(400, "email and password are required");
+        if (email.empty() || email.size() > 255 || password.size() < 8 || password.size() > 1024) {
+          return errorResponse(400, "email and a password of 8 to 1024 bytes are required");
         }
 
-        const std::optional<UserRecord> record = hub_.database().findUserByEmail(email);
-        if (!record) {
+        const auto session = auth_.login(email, password);
+        if (!session) {
           return errorResponse(401, "invalid credentials");
         }
+        auto response = jsonResponse(
+            200, {{"token", session->token}, {"user", session->user.toUser().toJson()}});
+        response.set_header("Cache-Control", "no-store");
+        return response;
+      });
 
-        // TODO(backend): verify `password` against record->passwordHash with
-        // bcrypt and persist the session in `sessions`.
-        return jsonResponse(
-            200, {{"token", "dev-token-" + record->id}, {"user", record->toUser().toJson()}});
+  CROW_ROUTE(app, "/api/v1/auth/me")
+  ([&app](const crow::request& request) {
+    auto response =
+        jsonResponse(200, app.get_context<AuthMiddleware>(request).user->toUser().toJson());
+    response.set_header("Cache-Control", "no-store");
+    return response;
+  });
+
+  CROW_ROUTE(app, "/api/v1/auth/logout")
+      .methods(crow::HTTPMethod::POST)([this](const crow::request& request) {
+        if (!auth_.logout(requestToken(request))) {
+          return errorResponse(503, "could not close session");
+        }
+        expireClients();
+        return crow::response(204);
       });
 
   // --- Dashboard ----------------------------------------------------------
@@ -147,7 +181,7 @@ void ApiController::registerRoutes(App& app) {
   // --- Device control -----------------------------------------------------
   CROW_ROUTE(app, "/api/v1/devices/<string>/commands")
       .methods(crow::HTTPMethod::POST)(
-          [this](const crow::request& request, const std::string& deviceId) {
+          [this, &app](const crow::request& request, const std::string& deviceId) {
             const std::optional<nlohmann::json> body = parseBody(request);
             if (!body) {
               return errorResponse(400, "malformed JSON body");
@@ -158,9 +192,9 @@ void ApiController::registerRoutes(App& app) {
             }
             const nlohmann::json params = body->value("params", nlohmann::json::object());
 
-            // TODO(backend): take the actor id from the bearer token once the
-            // auth middleware lands.
-            const CommandResult result = hub_.devices().sendCommand(deviceId, command, params, {});
+            const auto& user = app.get_context<AuthMiddleware>(request).user;
+            const CommandResult result =
+                hub_.devices().sendCommand(deviceId, command, params, user->id);
             if (!result.ok) {
               const int code = result.error.starts_with("unknown device") ? 404 : 409;
               return errorResponse(code, result.error);
@@ -243,10 +277,25 @@ void ApiController::registerRoutes(App& app) {
 
   // --- WebSocket ----------------------------------------------------------
   CROW_WEBSOCKET_ROUTE(app, "/api/v1/ws")
+      .subprotocols({"homestr"})
+      .onaccept([this](const crow::request& request, void** data) {
+        const std::string token = requestToken(request);
+        if (!auth_.validateSession(token)) {
+          return false;
+        }
+        *data = new std::string(AuthService::tokenHash(token));
+        return true;
+      })
       .onopen([this](crow::websocket::connection& connection) {
+        std::unique_ptr<std::string> hash{static_cast<std::string*>(connection.userdata())};
+        connection.userdata(nullptr);
+        if (!hash || !auth_.validateHash(*hash)) {
+          connection.close("Session expired", 4001);
+          return;
+        }
         {
           const std::lock_guard<std::mutex> lock(clientsMutex_);
-          clients_.insert(&connection);
+          clients_.emplace(&connection, *hash);
         }
         // Send the current state so a reconnecting client needs no extra fetch.
         connection.send_text(
@@ -256,7 +305,13 @@ void ApiController::registerRoutes(App& app) {
         const std::lock_guard<std::mutex> lock(clientsMutex_);
         clients_.erase(&connection);
       })
-      .onmessage([](crow::websocket::connection& connection, const std::string& data, bool) {
+      .onmessage([this](crow::websocket::connection& connection, const std::string& data, bool) {
+        const std::lock_guard<std::mutex> lock(clientsMutex_);
+        const auto found = clients_.find(&connection);
+        if (found == clients_.end() || !auth_.validateHash(found->second)) {
+          connection.close("Session expired", 4001);
+          return;
+        }
         // The WebSocket channel is push-only; "ping" keeps proxies from idling
         // the connection out.
         if (data == "ping") {

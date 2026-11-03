@@ -50,19 +50,23 @@ User UserRecord::toUser() const {
 // ---------------------------------------------------------------------------
 
 bool InMemoryDatabase::connect() {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
   connected_ = true;
   return true;
 }
 
 bool InMemoryDatabase::isConnected() const {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
   return connected_;
 }
 
 void InMemoryDatabase::addUser(UserRecord record) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
   users_.push_back(std::move(record));
 }
 
 std::optional<UserRecord> InMemoryDatabase::findUserByEmail(const std::string& email) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
   const auto match = std::find_if(users_.begin(), users_.end(),
                                   [&email](const UserRecord& user) { return user.email == email; });
   if (match == users_.end()) {
@@ -71,7 +75,54 @@ std::optional<UserRecord> InMemoryDatabase::findUserByEmail(const std::string& e
   return *match;
 }
 
+bool InMemoryDatabase::updatePasswordHash(const std::string& email, const std::string& hash) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
+  for (auto& user : users_) {
+    if (user.email == email) {
+      user.passwordHash = hash;
+      std::erase_if(sessions_, [&user](const auto& session) { return session.userId == user.id; });
+      return true;
+    }
+  }
+  return false;
+}
+
+bool InMemoryDatabase::saveSession(const SessionRecord& session, const std::string& verifiedHash) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
+  const bool current = std::any_of(users_.begin(), users_.end(), [&](const auto& user) {
+    return user.id == session.userId && user.passwordHash == verifiedHash;
+  });
+  if (!current) {
+    return false;
+  }
+  sessions_.push_back(session);
+  return true;
+}
+
+std::optional<UserRecord> InMemoryDatabase::findSessionUser(const std::string& tokenHash,
+                                                            std::int64_t now) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
+  for (const auto& session : sessions_) {
+    if (session.tokenHash == tokenHash && session.expiresAt > now) {
+      for (const auto& user : users_) {
+        if (user.id == session.userId) {
+          return user;
+        }
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+bool InMemoryDatabase::deleteSession(const std::string& tokenHash) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
+  std::erase_if(sessions_,
+                [&tokenHash](const auto& session) { return session.tokenHash == tokenHash; });
+  return true;
+}
+
 std::vector<DeviceRecord> InMemoryDatabase::listDevices(const std::string& householdId) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
   std::vector<DeviceRecord> result;
   for (const DeviceRecord& device : devices_) {
     if (householdId.empty() || device.householdId == householdId) {
@@ -82,6 +133,7 @@ std::vector<DeviceRecord> InMemoryDatabase::listDevices(const std::string& house
 }
 
 std::optional<DeviceRecord> InMemoryDatabase::findDevice(const std::string& deviceId) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
   const auto match =
       std::find_if(devices_.begin(), devices_.end(),
                    [&deviceId](const DeviceRecord& device) { return device.id == deviceId; });
@@ -92,6 +144,7 @@ std::optional<DeviceRecord> InMemoryDatabase::findDevice(const std::string& devi
 }
 
 bool InMemoryDatabase::saveDevice(const DeviceRecord& record) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
   const auto match =
       std::find_if(devices_.begin(), devices_.end(),
                    [&record](const DeviceRecord& device) { return device.id == record.id; });
@@ -104,6 +157,7 @@ bool InMemoryDatabase::saveDevice(const DeviceRecord& record) {
 }
 
 bool InMemoryDatabase::deleteDevice(const std::string& deviceId) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
   const auto removed =
       std::remove_if(devices_.begin(), devices_.end(),
                      [&deviceId](const DeviceRecord& device) { return device.id == deviceId; });
@@ -117,6 +171,7 @@ bool InMemoryDatabase::deleteDevice(const std::string& deviceId) {
 bool InMemoryDatabase::recordEvent(const std::string& deviceId, const std::string& actorType,
                                    const std::string& actorId, const std::string& command,
                                    const nlohmann::json& payload, bool succeeded) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
   events_.push_back({{"deviceId", deviceId},
                      {"actorType", actorType},
                      {"actorId", actorId},
@@ -137,6 +192,7 @@ class MariaDbDatabase : public Database {
   explicit MariaDbDatabase(DatabaseConfig config) : config_(std::move(config)) {}
 
   bool connect() override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
     try {
       sql::Driver* driver = sql::mariadb::get_driver_instance();
       sql::Properties properties({{"user", config_.user}, {"password", config_.password}});
@@ -149,9 +205,13 @@ class MariaDbDatabase : public Database {
     }
   }
 
-  bool isConnected() const override { return connection_ != nullptr && !connection_->isClosed(); }
+  bool isConnected() const override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return connection_ != nullptr && !connection_->isClosed();
+  }
 
   std::optional<UserRecord> findUserByEmail(const std::string& email) override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
     try {
       std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
           "SELECT id, name, email, password_hash, role FROM users WHERE "
@@ -174,7 +234,90 @@ class MariaDbDatabase : public Database {
     }
   }
 
+  bool updatePasswordHash(const std::string& email, const std::string& hash) override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+      connection_->setAutoCommit(false);
+      std::unique_ptr<sql::PreparedStatement> update(
+          connection_->prepareStatement("UPDATE users SET password_hash = ? WHERE email = ?"));
+      update->setString(1, hash);
+      update->setString(2, email);
+      const bool changed = update->executeUpdate() > 0;
+      std::unique_ptr<sql::PreparedStatement> revoke(connection_->prepareStatement(
+          "DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE email = ?)"));
+      revoke->setString(1, email);
+      revoke->executeUpdate();
+      connection_->commit();
+      connection_->setAutoCommit(true);
+      return changed;
+    } catch (const sql::SQLException&) {
+      try {
+        connection_->rollback();
+        connection_->setAutoCommit(true);
+      } catch (const sql::SQLException&) {
+      }
+      std::cerr << "[db] password update failed\n";
+      return false;
+    }
+  }
+
+  bool saveSession(const SessionRecord& session, const std::string& verifiedHash) override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+      std::unique_ptr<sql::PreparedStatement> statement(
+          connection_->prepareStatement("INSERT INTO sessions (token_hash, user_id, expires_at) "
+                                        "SELECT ?, id, FROM_UNIXTIME(?) FROM users WHERE id = ? "
+                                        "AND BINARY password_hash = BINARY ?"));
+      statement->setString(1, session.tokenHash);
+      statement->setInt64(2, session.expiresAt);
+      statement->setString(3, session.userId);
+      statement->setString(4, verifiedHash);
+      return statement->executeUpdate() == 1;
+    } catch (const sql::SQLException&) {
+      std::cerr << "[db] session write failed\n";
+      return false;
+    }
+  }
+
+  std::optional<UserRecord> findSessionUser(const std::string& tokenHash,
+                                            std::int64_t now) override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+      std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
+          "SELECT u.id, u.name, u.email, u.password_hash, u.role FROM users u "
+          "JOIN sessions s ON s.user_id = u.id WHERE s.token_hash = ? AND s.expires_at > "
+          "FROM_UNIXTIME(?)"));
+      statement->setString(1, tokenHash);
+      statement->setInt64(2, now);
+      std::unique_ptr<sql::ResultSet> rows(statement->executeQuery());
+      if (!rows->next()) {
+        return std::nullopt;
+      }
+      return UserRecord{rows->getString("id").c_str(), rows->getString("name").c_str(),
+                        rows->getString("email").c_str(), rows->getString("password_hash").c_str(),
+                        rows->getString("role").c_str()};
+    } catch (const sql::SQLException&) {
+      std::cerr << "[db] session lookup failed\n";
+      return std::nullopt;
+    }
+  }
+
+  bool deleteSession(const std::string& tokenHash) override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+      std::unique_ptr<sql::PreparedStatement> statement(
+          connection_->prepareStatement("DELETE FROM sessions WHERE token_hash = ?"));
+      statement->setString(1, tokenHash);
+      statement->executeUpdate();
+      return true;
+    } catch (const sql::SQLException&) {
+      std::cerr << "[db] session deletion failed\n";
+      return false;
+    }
+  }
+
   std::vector<DeviceRecord> listDevices(const std::string& householdId) override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::vector<DeviceRecord> result;
     try {
       std::unique_ptr<sql::PreparedStatement> statement(
@@ -191,6 +334,7 @@ class MariaDbDatabase : public Database {
   }
 
   std::optional<DeviceRecord> findDevice(const std::string& deviceId) override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
     try {
       std::unique_ptr<sql::PreparedStatement> statement(
           connection_->prepareStatement(DEVICE_SELECT + std::string{" WHERE d.id = ?"}));
@@ -207,6 +351,7 @@ class MariaDbDatabase : public Database {
   }
 
   bool saveDevice(const DeviceRecord& record) override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
     try {
       std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
           "INSERT INTO devices (id, household_id, name, ip_address, "
@@ -233,6 +378,7 @@ class MariaDbDatabase : public Database {
   }
 
   bool deleteDevice(const std::string& deviceId) override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
     try {
       // The subtype rows and audit events cascade from devices.id.
       std::unique_ptr<sql::PreparedStatement> statement(
@@ -248,6 +394,7 @@ class MariaDbDatabase : public Database {
   bool recordEvent(const std::string& deviceId, const std::string& actorType,
                    const std::string& actorId, const std::string& command,
                    const nlohmann::json& payload, bool succeeded) override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
     try {
       std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
           "INSERT INTO device_events (device_id, actor_type, actor_id, "
@@ -337,6 +484,7 @@ class MariaDbDatabase : public Database {
     return true;
   }
 
+  mutable std::recursive_mutex mutex_;
   DatabaseConfig config_;
   std::unique_ptr<sql::Connection> connection_;
 };

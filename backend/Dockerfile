@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
       git \
       libasio-dev \
       libmariadb-dev \
+      libsodium-dev \
       libssl-dev \
       ninja-build \
       pkg-config \
@@ -86,6 +87,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install --no-install-recommends -y \
       ca-certificates \
       libmariadb3 \
+      libsodium23 \
       libssl3 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --shell /usr/sbin/nologin homestr

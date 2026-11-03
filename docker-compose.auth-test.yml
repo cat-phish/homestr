@@ -1,0 +1,51 @@
+# Disposable auth integration stack. Uses separate data and build volumes.
+# docker compose -f docker-compose.auth-test.yml up -d --build --wait --wait-timeout 300
+# python3 scripts/test-auth.py docker-compose.auth-test.yml http://localhost:48080
+# docker compose -f docker-compose.auth-test.yml down -v
+name: homestr-auth-test
+
+services:
+  db:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: auth_test_root
+      MARIADB_DATABASE: homestr_db
+      MARIADB_USER: homestr_user
+      MARIADB_PASSWORD: auth_test_app
+    volumes:
+      - auth-db:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro${VOLUME_SUFFIX:-}
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  backend:
+    build:
+      context: ./backend
+      target: dev
+    environment:
+      DB_HOST: db
+      MARIADB_DATABASE: homestr_db
+      MARIADB_USER: homestr_user
+      MARIADB_PASSWORD: auth_test_app
+      HOMESTR_RUN_TESTS: '1'
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:${HOMESTR_AUTH_TEST_PORT:-48080}:8080'
+    volumes:
+      - ./backend:/app:rw${VOLUME_SUFFIX:-}
+      - auth-build:/app/build
+    healthcheck:
+      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/8080']
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+volumes:
+  auth-db:
+  auth-build:

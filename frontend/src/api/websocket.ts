@@ -1,3 +1,4 @@
+import { api, getToken, invalidateSession } from '@/api/client';
 import type { ServerEvent } from '@/types';
 
 const DEFAULT_PATH = '/api/v1/ws';
@@ -30,7 +31,11 @@ export function subscribe(
   let closedByCaller = false;
 
   const connect = (): void => {
-    socket = new WebSocket(url);
+    const token = getToken();
+    if (token === null) {
+      return;
+    }
+    socket = new WebSocket(url, ['homestr', `bearer.${token}`]);
 
     socket.onopen = () => {
       attempt = 0;
@@ -45,15 +50,26 @@ export function subscribe(
       }
     };
 
-    socket.onclose = () => {
+    socket.onclose = (event: CloseEvent) => {
       clearInterval(pingTimer);
+      if (event.code === 4001) {
+        invalidateSession(token);
+        return;
+      }
       if (closedByCaller) {
         return;
       }
-      // Exponential backoff, capped: the hub restarts during development.
-      attempt += 1;
-      const delay = Math.min(1000 * 2 ** (attempt - 1), MAX_BACKOFF_MS);
-      retryTimer = setTimeout(connect, delay);
+      // Browsers hide HTTP handshake errors. Check the session over REST so a
+      // rejected upgrade can return the user to sign-in instead of retrying forever.
+      const scheduleRetry = (): void => {
+        if (closedByCaller || getToken() !== token) {
+          return;
+        }
+        attempt += 1;
+        const delay = Math.min(1000 * 2 ** (attempt - 1), MAX_BACKOFF_MS);
+        retryTimer = setTimeout(connect, delay);
+      };
+      void api.me().then(scheduleRetry, scheduleRetry);
     };
 
     socket.onerror = () => socket?.close();

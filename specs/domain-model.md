@@ -27,6 +27,33 @@ document; change it first.
 > controllers; the admin-only endpoints are marked `403` in
 > `specs/api-spec.yaml`.
 
+### Authentication and sessions
+
+- Passwords are hashed with libsodium Argon2id; hashes never appear in responses.
+- A session contains a SHA-256 token hash, user ID, and absolute expiry. Tokens
+  contain 32 random bytes encoded as hex and expire after 24 hours; only their
+  hashes are persisted. Expired or revoked tokens cannot authenticate.
+- All `/api/v1` routes except `/auth/login` require a session. `/healthz` and
+  CORS preflight remain public. Device registration, removal, and discovery
+  require the administrator role. Direct commands record the resolved user ID.
+- `GET /auth/me` validates the session and returns the current user. Logout
+  deletes the current session and closes its WebSocket connections.
+- Browser WebSockets offer `homestr` and `bearer.<token>` subprotocols. The server
+  selects only `homestr`; credentials never enter URLs. Non-browser clients may
+  use the Authorization header. Validate before sending any snapshot, before
+  each push/message, and every second while idle; close invalid sessions with
+  code 4001. Tokens are never echoed or logged.
+- The frontend validates a stored token before showing the dashboard. A protected
+  REST 401 or a WebSocket 4001 clears authentication and returns to sign-in.
+- `homestr_server --set-admin-password` interactively sets the seeded admin's
+  password (8–1024 bytes), also on existing databases, and revokes that user's
+  sessions. There is no shipped default password; unconfigured accounts cannot
+  sign in. The command does not start the HTTP server.
+- Database operations serialize access to each shared connection. Password
+  updates and session revocation are atomic. Session issuance checks that the
+  stored password hash still matches the verified hash, so an in-flight login
+  cannot bypass a password reset.
+
 ### Device Hierarchy
 
 - **SmartDevice** (abstract base):
@@ -87,7 +114,8 @@ right C++ subclass (`DeviceManager::materialise`).
     Connector/C++; `InMemoryDatabase` backs the unit tests.
   - Operations: `connect()`, `findUserByEmail(email)`,
     `listDevices(householdId)`, `findDevice(id)`, `saveDevice(record)`,
-    `deleteDevice(id)`, `recordEvent(...)`
+    `deleteDevice(id)`, `recordEvent(...)`, `updatePasswordHash(email, hash)`,
+    `saveSession(record)`, `findSessionUser(tokenHash, now)`, `deleteSession(tokenHash)`
 - **AutomationRule**:
   - Attributes: `id: UUID`, `name: string`, `enabled: bool`,
     `triggerType: enum('SCHEDULE','DEVICE_STATE','MANUAL')`,
@@ -142,8 +170,6 @@ right C++ subclass (`DeviceManager::materialise`).
 
 Tracked here so the specs stay ahead of the code:
 
-- Password hashing and bearer-token verification (`sessions` table exists;
-  `POST /auth/login` currently only proves the user exists).
 - Real mDNS/SSDP discovery; `discover()` returns the cache today.
 - Cron evaluation for `SCHEDULE` triggers: the rule matches a tick that the
   scheduler has already resolved, and the scheduler itself is not implemented.
