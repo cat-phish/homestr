@@ -11,7 +11,7 @@ changes must go through first.
 
 ## Current state
 
-As of 2026-11-02, after secure authentication and session handling.
+As of 2026-11-02, after authentication, rule persistence, and manual routine creation in the WebUI.
 
 The architecture, schema, build, container stack, tests and CI are in place and
 the stack runs end to end. It is best understood as **a working simulator of
@@ -30,7 +30,7 @@ time. "Turn on the light" currently means "record that the light is on".
 | Commands applied to the model and persisted to the subtype tables | No device I/O at all — no driver, no network |
 | Audit trail in `device_events`, failures included | LAN discovery returns an empty list |
 | Dashboard aggregate and WebSocket push | Cron scheduler never ticks; `evaluate()` is only reached via the manual trigger endpoint |
-| Rule create / enable / disable / manual trigger | Rules are in memory only and vanish on restart |
+| Persisted rules; WebUI manual creation, action ordering, Run and enable/disable | Scheduled/device-state editors and rule editing/deletion endpoints |
 | Backend and frontend unit suites; disposable-stack auth smoke test | Single hard-coded household |
 
 Every gap is also tracked under "Open items" in
@@ -60,8 +60,8 @@ has nothing built yet.
 ### 2. Database & Persistence
 
 - **Done** — MariaDB relational schema (`init.sql`).
-- **In Progress** — C++ database wrapper. Device and user queries use prepared
-  statements; rule read/write methods are missing (Step 2).
+- **Done** — C++ database wrapper for devices, users, sessions, and household-scoped
+  rule records. Rule/action updates are transactional.
 
 ### 3. Authentication & Access Control (RBAC)
 
@@ -96,16 +96,23 @@ has nothing built yet.
 
 - **In Progress** — `AutomationRule` model and execution. `evaluate()` works;
   no scheduler, no device-state triggers, no recursion guard (Step 4).
-- **To Do** — Rule persistence and frontend rule configurator (Steps 2, 7).
+- **Done** — Rule persistence, startup restoration, and persisted enable/disable (Step 2).
+- **Done** — WebUI manual routine creation with ordered actions, validation, Run,
+  and enable/disable controls (Step 7).
+- **To Do** — Scheduled/device-state editors and editing/deleting saved rules.
 
 ### 8. Testing & Quality Assurance
 
 - **In Progress** — C++ GoogleTest units cover domain models, database fakes,
   authentication, and middleware. `scripts/test-auth.py` verifies auth SQL,
-  device reload, and WebSockets against a disposable MariaDB stack. Integration
-  coverage still needs to run in CI (Step 3).
+  device/rule reload, ordered actions, transaction rollback, and WebSockets
+  against a disposable MariaDB stack. Integration coverage still needs to run
+  in CI (Step 3).
 - **In Progress** — Vitest covers device cards, API requests, frontend session
-  handling, and WebSocket authentication. Browser end-to-end coverage remains open.
+  handling, WebSocket authentication, manual routine forms, and dashboard Run
+  behavior. A local Chromium check verifies creation, ordering, execution,
+  restart/reload persistence, and mobile layout against a disposable stack.
+  Automated browser coverage in CI remains open.
 
 ### 9. Households & Security
 
@@ -151,30 +158,37 @@ Setup and reset instructions are in [README.md](README.md#log-in). Household
 isolation and per-device permissions remain Step 6; login rate limiting and CORS
 restrictions remain under Smaller items.
 
-## Step 2 — Rule persistence
+## Step 2 — Rule persistence — Done
 
-Smallest real gap. `automation_rules` and `automation_actions` are in the
-schema and entirely unused.
+- [x] `RuleRecord` and household-scoped `listRules` / `saveRule` / `deleteRule`
+      operations in both database implementations.
+- [x] Atomic rule/action writes, preserving action order and rolling back on
+      failure. No schema migration is required; existing tables are used.
+- [x] Restore rules during `HomeStr::start`; persist creation and enable/disable
+      before changing the in-memory snapshot.
+- [x] Distinguish duplicate IDs (409), unknown rules (404), and storage failures
+      (503). Rule-load failures prevent an incomplete startup.
+- [x] Synchronized rule mutation and snapshot reads.
+- [x] Unit coverage for configuration round-trips, household isolation, startup
+      restoration, duplicate handling, and failed writes/reads.
+- [x] Disposable MariaDB smoke coverage for multiple trigger types, empty and
+      ordered action lists, disable/restart/re-enable/restart/execute, dashboard
+      and WebSocket snapshots, and forced transaction rollback.
 
-- [ ] Add `listRules` / `saveRule` / `deleteRule` to the `Database` interface
-      and both implementations, following the `saveDevice` / `saveSubtype`
-      pattern.
-- [ ] Load rules in `HomeStr::start`; persist on create and on enable/disable.
-- [ ] Tests against `InMemoryDatabase`.
-
-Removes the most confusing thing a newcomer hits: rules silently disappearing
-on `docker compose restart backend`.
+Rule editing/deletion endpoints and a frontend editor remain future work.
+Database integration checks still need CI wiring in Step 3.
 
 ## Step 3 — Close the integration test gap
 
 Worth doing before the driver layer, because that step multiplies the surface
 area for this class of failure.
 
-Nothing in the suite or CI compares the SQL string literals in
-`backend/src/services/database.cpp` against `database/init.sql`. Two bugs
-shipped past a green suite because of it: a column-name mismatch that broke
-login, and a broken `DEVICE_SELECT` that made every device read fail silently.
-All unit tests use `InMemoryDatabase`, so none of them can catch it.
+Unit tests use `InMemoryDatabase` and cannot detect SQL/schema drift. Two bugs
+previously shipped past a green suite: a column-name mismatch that broke login,
+and a broken `DEVICE_SELECT` that made every device read fail silently.
+`scripts/test-auth.py` now exercises authentication, device reload, and rule
+persistence against MariaDB locally. The remaining gap is running that smoke
+test in CI.
 
 - [ ] CI job: bring the compose stack up, run `scripts/seed-demo.sh`, restart
       the backend, assert `4 device(s) loaded` in the log.
@@ -226,7 +240,11 @@ Where the project stops being a simulation. Write the spec before the code.
 - [x] Auth guard validating the stored token and handling expired sessions.
 - [ ] Router for additional screens.
 - [ ] Admin screens: register from discovery results, user management.
-- [ ] Rule editor.
+- [x] Manual routine creation: names, supported device commands and parameters,
+      ordered actions, validation, pending/error handling, and saved results.
+- [x] Run enabled manual routines and refresh device states; retain enable/disable.
+- [ ] Editing/deleting saved rules.
+- [ ] Scheduled/device-state editors after their trigger engines are implemented.
 - [ ] A real error surface; errors currently land in a single `role="alert"`
       string.
 - [ ] Optimistic updates with rollback on a failed command.

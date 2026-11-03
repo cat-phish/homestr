@@ -177,6 +177,7 @@ if(HOMESTR_BUILD_TESTS)
                                tests/automation_rule_test.cpp
                                tests/database_test.cpp
                                tests/home_str_test.cpp
+                               tests/rule_persistence_test.cpp
                                tests/light_test.cpp
                                tests/smart_device_test.cpp
                                tests/smart_speaker_test.cpp

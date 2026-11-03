@@ -113,10 +113,10 @@ rather than erroring.
 | Argon2id password verification, persisted 24-hour sessions, logout revocation | Multi-household support — the hub loads one hard-coded household at boot |
 | Bearer-token enforcement on REST and WebSocket; admin-only device setup | Device health monitoring and physical device communication |
 | Device commands: `turnOn`, `turnOff`, `setBrightness`, `setColor`, `play`, `pause`, `setVolume`, `connect` | LAN discovery — `GET /devices/discover` returns an empty list, no mDNS/SSDP sweep |
-| Device state persisted to the subtype tables and reloaded on restart | Cron scheduler — `SCHEDULE` rules never fire on their own, only via the manual trigger endpoint |
-| Audit trail in `device_events`, including failed commands | Automation rules live in memory only; they are **not** persisted and vanish on restart |
+| Device state persisted to the subtype tables and reloaded on restart | Cron scheduler — `SCHEDULE` rules do not fire automatically |
+| Audit trail in `device_events`, including failed commands | Rule editing and deletion endpoints are not built |
 | Dashboard aggregate, WebSocket push on every state change | Per-user device assignment — any authenticated caller can command any device in the household |
-| Device registration and removal; rule create / enable / disable / manual trigger | Frontend rule editor and device setup screens |
+| Persisted rules; WebUI manual routine creation, action ordering, Run and enable/disable | Scheduled/device-state routine editors and device setup screens |
 
 Core backend gaps above are tracked under "Open items" in
 [`specs/domain-model.md`](specs/domain-model.md), and sequenced into work items
@@ -175,6 +175,22 @@ device cards and one rule:
 | Porch Light (offline) | Greyed out, every control disabled |
 | Rule "Lights out at 22:00" | Enable/Disable toggle |
 
+**Create a manual routine.** Under **Automation routines**, choose **New routine**.
+Name it, select a device and command, and enter any brightness, color, volume, or
+optional track settings. Use **Add action**, **Move up**, **Move down**, and
+**Remove** to arrange the actions, then choose **Save routine**. At least one
+action is required. A failed save keeps your draft available for retrying.
+
+New routines are enabled. **Run** triggers their actions in the displayed order
+and refreshes device states; **Disable** prevents running the routine until it
+is enabled again. The trigger endpoint does not report individual action
+outcomes, so the confirmation says the routine was triggered. Check device
+states to confirm the result, especially for offline devices. Saved routines
+and their enabled state survive a backend restart.
+
+The WebUI currently creates manual routines. Scheduling, device-state triggers,
+and editing/deleting saved routines remain future work.
+
 **Authenticated API examples.** Set `HOMESTR_TOKEN` to a token returned by
 `POST /api/v1/auth/login` with your email and password. Every API request below
 requires that token; `/healthz` remains public. Do not commit tokens or credentials.
@@ -190,14 +206,16 @@ curl -s -X POST localhost:8080/api/v1/devices/11111111-0000-4000-8000-0000000000
 The slider moves on its own. That is the WebSocket `device_state` frame, not
 polling.
 
-**Rule execution** dispatches through the hub to the device:
+**Manual rule execution** is available through **Run** in the dashboard. For an
+API call, set `RULE_ID` to the ID of a saved `MANUAL` routine from `GET /rules`:
 
 ```bash
-curl -s -X POST localhost:8080/api/v1/rules/55555555-0000-4000-8000-000000000005/trigger \
+curl -s -X POST "localhost:8080/api/v1/rules/${RULE_ID}/trigger" \
   -H "Authorization: Bearer ${HOMESTR_TOKEN}"
 ```
 
-Returns the fired rule id; the kitchen light turns off in the UI.
+Returns the fired rule ID. The dashboard refreshes device states after its Run
+action; the API response confirms the trigger rather than each action outcome.
 
 **Error paths** are real, not swallowed:
 
@@ -222,8 +240,11 @@ docker compose logs backend | grep '\[hub\] household'
 # => [hub] household 0000...00a1: 4 device(s) loaded
 ```
 
-A `0 device(s) loaded` there, or any `[db] ...` line in the log, means a query
-is broken — the hub logs and continues rather than crashing.
+With demo data seeded, the log should show `4 device(s) loaded; 1 rule(s) loaded`.
+Device state, rule definitions, ordered actions, and enabled/disabled settings
+are restored from MariaDB. A rule read failure prevents startup rather than
+silently presenting an empty rule list. Unexpected counts or `[db]` errors need
+investigation.
 
 **Audit trail**, including the failures from above:
 
@@ -337,8 +358,8 @@ there means a query in `backend/src/services/database.cpp` disagrees with
 
 **Dashboard is empty after a restart**
 Run `./scripts/seed-demo.sh`. If devices were there before the restart and are
-gone now, see the persistence check above — automation rules, unlike devices,
-are genuinely not persisted yet.
+gone now, see the persistence check above. Both devices and saved automation
+rules should survive backend restarts.
 
 **The backend container restarts in a loop at first boot**
 It retries the database for 60s while MariaDB initialises, then exits. Give it
@@ -388,6 +409,8 @@ docker compose -f docker-compose.auth-test.yml down -v
 
 It sets the test administrator password and inserts test records, then checks
 route permissions, audit attribution, WebSocket authentication and revocation,
-expiry, and session/device persistence across a backend restart. Do not point it
+expiry, and session/device/rule persistence across backend restarts. It also
+verifies action order, disabled-state recovery, and transaction rollback after
+forced write failures. Do not point it
 at a database you use. The manual persistence check above remains useful for
 other SQL changes.

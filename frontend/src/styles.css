@@ -75,3 +75,114 @@ body {
   align-items: center;
   padding: 0.25rem 0;
 }
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+  padding: 0.35rem 0.75rem;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+.dashboard__routines {
+  margin-top: 2rem;
+}
+
+.dashboard__section-heading,
+.routine-buttons,
+.rule-action__buttons,
+.rule-form__buttons {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.dashboard__section-heading {
+  justify-content: space-between;
+}
+
+.dashboard__rules li {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+}
+
+.routine-summary {
+  display: grid;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rule-form {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+  max-width: 56rem;
+}
+
+.rule-form__fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.rule-form__fields > label,
+.rule-action label {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.rule-form input,
+.rule-form select {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0.35rem;
+}
+
+#routine-name {
+  width: 100%;
+  max-width: 28rem;
+}
+
+.rule-form__actions {
+  padding: 0;
+  list-style: none;
+}
+
+.rule-action {
+  min-width: 0;
+  margin: 1rem 0;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 0.35rem;
+}
+
+.rule-action__inputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 0.75rem;
+}
+
+.rule-action__inputs select {
+  width: 100%;
+}
+
+.rule-action small {
+  display: block;
+}
+
+.rule-action__buttons,
+.rule-form__buttons {
+  margin-top: 1rem;
+}

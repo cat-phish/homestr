@@ -327,6 +327,9 @@ paths:
     post:
       tags: [Rules]
       summary: Create an automation rule
+      description: |
+        Persists the rule and its ordered actions atomically for the loaded
+        household before returning success. Failed writes leave no partial rule.
       operationId: createRule
       requestBody:
         required: true
@@ -346,6 +349,8 @@ paths:
                   command: turnOff
                   params: {}
       responses:
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
         '201':
           description: Rule created
           content:
@@ -370,7 +375,9 @@ paths:
     put:
       tags: [Rules]
       summary: Enable or disable a rule
-      description: Maps onto `AutomationRule::enable` / `disable`.
+      description: |
+        Persists the enabled state before changing the current snapshot.
+        The saved state survives backend restarts.
       operationId: setRuleEnabled
       requestBody:
         required: true
@@ -400,6 +407,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -493,6 +502,13 @@ components:
 
     Unauthorized:
       description: Missing, expired or invalid bearer token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    StorageUnavailable:
+      description: Persistence failed; the requested rule change was not applied
       content:
         application/json:
           schema:

@@ -18,41 +18,67 @@ bool HomeStr::start(const std::string& householdId) {
   if (!database_->isConnected() && !database_->connect()) {
     return false;
   }
+  const std::lock_guard<std::mutex> lock(rulesMutex_);
+  const auto records = database_->listRules(householdId);
+  if (!records) {
+    return false;
+  }
+  std::vector<AutomationRule> restored;
+  for (const auto& record : *records) {
+    restored.push_back(record.toRule());
+  }
   householdId_ = householdId;
+  rules_ = std::move(restored);
   const std::size_t loaded = deviceManager_.loadHousehold(householdId);
-  std::cout << "[hub] household " << householdId << ": " << loaded << " device(s) loaded\n";
+  std::cout << "[hub] household " << householdId << ": " << loaded << " device(s) loaded; "
+            << rules_.size() << " rule(s) loaded\n";
   return true;
 }
 
-bool HomeStr::addRule(AutomationRule rule) {
+std::vector<AutomationRule> HomeStr::rules() const {
+  const std::lock_guard<std::mutex> lock(rulesMutex_);
+  return rules_;
+}
+
+RuleWriteResult HomeStr::addRule(AutomationRule rule) {
+  const std::lock_guard<std::mutex> lock(rulesMutex_);
   const bool known =
       std::any_of(rules_.begin(), rules_.end(),
                   [&rule](const AutomationRule& existing) { return existing.id() == rule.id(); });
   if (known) {
-    return false;
+    return {RuleWriteStatus::Duplicate};
+  }
+  if (!database_->saveRule(RuleRecord::fromRule(rule, householdId_))) {
+    return {RuleWriteStatus::StorageError};
   }
   rules_.push_back(std::move(rule));
-  return true;
+  return {RuleWriteStatus::Saved};
 }
 
-bool HomeStr::setRuleEnabled(const std::string& ruleId, bool enabled) {
+RuleWriteResult HomeStr::setRuleEnabled(const std::string& ruleId, bool enabled) {
+  const std::lock_guard<std::mutex> lock(rulesMutex_);
   const auto match =
       std::find_if(rules_.begin(), rules_.end(),
                    [&ruleId](const AutomationRule& rule) { return rule.id() == ruleId; });
   if (match == rules_.end()) {
-    return false;
+    return {RuleWriteStatus::NotFound};
   }
+  AutomationRule updated = *match;
   if (enabled) {
-    match->enable();
+    updated.enable();
   } else {
-    match->disable();
+    updated.disable();
   }
-  return true;
+  if (!database_->saveRule(RuleRecord::fromRule(updated, householdId_))) {
+    return {RuleWriteStatus::StorageError};
+  }
+  *match = std::move(updated);
+  return {RuleWriteStatus::Saved};
 }
 
 std::vector<std::string> HomeStr::handleEvent(const TriggerEvent& event) {
   std::vector<std::string> fired;
-  for (const AutomationRule& rule : rules_) {
+  for (const AutomationRule& rule : rules()) {
     if (!rule.evaluate(event)) {
       continue;
     }
@@ -72,6 +98,7 @@ std::vector<std::string> HomeStr::handleEvent(const TriggerEvent& event) {
 }
 
 nlohmann::json HomeStr::dashboard() const {
+  const std::lock_guard<std::mutex> lock(rulesMutex_);
   nlohmann::json rules = nlohmann::json::array();
   for (const AutomationRule& rule : rules_) {
     rules.push_back(rule.toJson());

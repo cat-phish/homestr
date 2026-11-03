@@ -114,7 +114,8 @@ right C++ subclass (`DeviceManager::materialise`).
     Connector/C++; `InMemoryDatabase` backs the unit tests.
   - Operations: `connect()`, `findUserByEmail(email)`,
     `listDevices(householdId)`, `findDevice(id)`, `saveDevice(record)`,
-    `deleteDevice(id)`, `recordEvent(...)`, `updatePasswordHash(email, hash)`,
+    `deleteDevice(id)`, `listRules(householdId)`, `saveRule(record)`,
+    `deleteRule(householdId, id)`, `recordEvent(...)`, `updatePasswordHash(email, hash)`,
     `saveSession(record)`, `findSessionUser(tokenHash, now)`, `deleteSession(tokenHash)`
 - **AutomationRule**:
   - Attributes: `id: UUID`, `name: string`, `enabled: bool`,
@@ -155,6 +156,51 @@ right C++ subclass (`DeviceManager::materialise`).
 3. On success the controller broadcasts a `device_state` WebSocket frame, so
    every open WebUI reflects the change without polling.
 
+### Manual routines in the WebUI
+
+- The dashboard offers a form for creating manual routines with a trimmed name
+  (1–100 characters), a client-generated UUID, and at least one ordered action.
+  New routines are enabled, use `MANUAL`, and have an empty trigger payload.
+- Each action selects a registered device and a command supported by its type.
+  Brightness and volume require an integer from 0–100; color requires `#RRGGBB`;
+  playback may include an optional track. Users can add, remove, and reorder
+  actions before saving. Unavailable selections and invalid values block saving.
+- Save uses the existing rule endpoint and publishes the returned rule only
+  after success. Failed saves retain the draft and show a useful error. Cancel
+  discards the draft. Pending saves disable repeat submissions and draft changes.
+- Without registered devices the dashboard explains why creation is unavailable.
+  Offline devices can be configured, with a note that they may not respond.
+- Enabled manual routines have a Run button, guarded against repeated clicks
+  while pending. Disabled routines cannot run. Other trigger types retain their
+  enable/disable controls but are not offered manual Run buttons.
+- After a manual trigger the initiating dashboard refreshes device state from
+  the hub. The current endpoint confirms a rule was triggered, not that every
+  action succeeded; feedback must not claim all actions completed successfully.
+  Trigger and refresh failures are shown separately. Creation and execution use
+  the existing authenticated API and introduce no transport or schema changes.
+- Editing/deleting saved rules and automatic schedule/device-state execution
+  remain separate backlog work.
+
+### Rule persistence
+
+- `RuleRecord` stores the rule ID, household ID, name, enabled state, trigger
+  type/payload, and ordered action list. The public rule JSON stays unchanged.
+- `Database::listRules(householdId)` returns only that household's complete
+  records, ordered by rule ID and action sequence. An empty list is successful;
+  a read failure is distinct and prevents hub startup with an incomplete list.
+- `saveRule(record)` atomically saves the rule and replaces its ordered actions.
+  A failed write rolls back the entire change. A rule ID belonging to a different
+  household cannot be overwritten. `deleteRule(householdId, id)` deletes only a
+  matching household's rule, with action deletion cascading from the schema.
+- Startup loads persisted rules as well as devices. Repeated startup replaces
+  the rule snapshot rather than appending duplicates. Enabled and disabled rules,
+  empty action lists, trigger payloads, and action parameters survive restart.
+- Creation and enable/disable changes are persisted before the in-memory
+  snapshot changes. Duplicate creation returns 409, an unknown rule returns 404,
+  and persistence failures return 503 without reporting a successful change.
+- Rule reads return a snapshot by value; mutations are synchronized so concurrent
+  creates/toggles cannot race with dashboard reads or execution.
+
 ### Automation
 
 1. The scheduler (`SCHEDULE`) or a device state change (`DEVICE_STATE`) produces
@@ -175,9 +221,6 @@ Tracked here so the specs stay ahead of the code:
   scheduler has already resolved, and the scheduler itself is not implemented.
 - Per-household scoping from the session instead of the single default
   household in `main.cpp`.
-- Automation rule persistence: `automation_rules` and `automation_actions` exist
-  in the schema, but `HomeStr` keeps rules in memory only, so they are lost on
-  restart. Needs `Database` read/write methods plus a load in `start()`.
 - Per-user device assignment: the RBAC rule says a `User` controls *assigned*
   devices, but today any authenticated caller may command any device in the
   loaded household. Needs an assignment table plus a check in the controller.

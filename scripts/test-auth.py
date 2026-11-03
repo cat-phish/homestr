@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Authentication smoke test. Run ONLY against a disposable Compose stack.
+"""Authentication and rule-persistence smoke test. Run ONLY against a disposable Compose stack.
 
 Usage: python3 scripts/test-auth.py /path/to/test-compose.yml http://localhost:48080
 The stack must expose its backend and have a MariaDB service named db. This test
@@ -131,6 +131,30 @@ def main():
     request('/devices/auth-test-device/commands', member, 'POST', {'command': 'turnOn'})
     audit = sql("SELECT actor_type, actor_id FROM device_events WHERE device_id = 'auth-test-device';")
     assert 'USER\tauth-test-member' in audit
+    # Same-device actions deliberately repeat to verify sequence, not just membership.
+    rule = {
+        'id': 'auth-test-rule', 'name': 'Bedtime: "kitchen"', 'enabled': True,
+        'triggerType': 'MANUAL', 'trigger': {'note': "saved payload's value"},
+        'actions': [
+            {'deviceId': 'auth-test-device', 'command': 'turnOn', 'params': {}},
+            {'deviceId': 'auth-test-device', 'command': 'setBrightness', 'params': {'level': 17}},
+            {'deviceId': 'auth-test-device', 'command': 'turnOff', 'params': {}},
+        ],
+    }
+    disabled_rule = dict(rule, id='auth-disabled-rule', enabled=False, triggerType='DEVICE_STATE',
+                         trigger={'deviceId': 'auth-test-device', 'attribute': 'powerOn', 'equals': True})
+    empty_rule = dict(rule, id='auth-empty-rule', triggerType='SCHEDULE',
+                      trigger={'cron': '0 22 * * *'}, actions=[])
+    sql("DELETE FROM automation_rules WHERE id IN ('auth-test-rule', 'auth-disabled-rule', 'auth-empty-rule');")
+    for entry in [rule, disabled_rule, empty_rule]:
+        assert request('/rules', admin, 'POST', entry, expected=201) == entry
+    request('/rules', admin, 'POST', dict(rule, name='Duplicate'), expected=409)
+    request('/rules/auth-test-rule/enabled', admin, 'PUT', {'enabled': 'false'}, expected=400)
+    request('/rules/unknown/enabled', admin, 'PUT', {'enabled': False}, expected=404)
+    request('/rules/auth-test-rule/enabled', admin, 'PUT', {'enabled': False})
+    rule['enabled'] = False
+    expected_rules = {entry['id']: entry for entry in [rule, disabled_rule, empty_rule]}
+
     digest = hashlib.sha256(admin.encode()).hexdigest()
     assert digest in sql('SELECT token_hash FROM sessions;')
     assert admin not in sql('SELECT token_hash FROM sessions;')
@@ -141,6 +165,7 @@ def main():
     assert ws.headers.get('sec-websocket-protocol') == 'homestr'
     opcode, payload = ws.frame()
     assert opcode == 1 and json.loads(payload)['type'] == 'snapshot'
+    assert {entry['id']: entry for entry in json.loads(payload)['payload']['rules']} == expected_rules
     request('/auth/logout', admin, 'POST', expected=204)
     opcode, payload = ws.frame()
     assert opcode == 8 and struct.unpack('!H', payload[:2])[0] == 4001
@@ -170,15 +195,54 @@ def main():
     else:
         raise AssertionError('Backend did not recover after restart')
     assert request('/devices/auth-test-device', admin)['powerOn']
+    assert {entry['id']: entry for entry in request('/rules', admin)['rules']} == expected_rules
+    assert {entry['id']: entry for entry in request('/dashboard', admin)['rules']} == expected_rules
+    request('/rules/auth-test-rule/trigger', admin, 'POST', expected=404)
+    assert request('/devices/auth-test-device', admin)['powerOn']
+    request('/rules/auth-test-rule/enabled', admin, 'PUT', {'enabled': True})
+    rule['enabled'] = True
+    run('restart', 'backend')
+    for attempt in range(30):
+        try:
+            request('/auth/me', admin)
+            break
+        except (OSError, AssertionError):
+            time.sleep(0.25)
+    else:
+        raise AssertionError('Backend did not recover after second restart')
+    assert {entry['id']: entry for entry in request('/rules', admin)['rules']} == expected_rules
+    request('/rules/auth-test-rule/trigger', admin, 'POST')
+    state = request('/devices/auth-test-device', admin)
+    assert not state['powerOn'] and state['brightness'] == 17
+
     logs = run('logs', '--no-color', 'backend')
     assert '1 device(s) loaded' in logs
     assert '[db]' not in logs, 'Database errors in backend logs'
     assert admin not in logs and password not in logs
+    # A failed action insert must roll back both the rule row and all preceding actions.
+    bad_rule = dict(rule, id='auth-bad-rule', actions=rule['actions'] + [
+        {'deviceId': 'missing-device', 'command': 'turnOn', 'params': {}},
+    ])
+    request('/rules', admin, 'POST', bad_rule, expected=503)
+    assert 'auth-bad-rule' not in {entry['id'] for entry in request('/rules', admin)['rules']}
+    assert sql("SELECT COUNT(*) AS n FROM automation_rules WHERE id = 'auth-bad-rule';").strip().endswith('0')
+    assert sql("SELECT COUNT(*) AS n FROM automation_actions WHERE rule_id = 'auth-bad-rule';").strip().endswith('0')
+    sql("DROP TRIGGER IF EXISTS auth_reject_actions; "
+        "CREATE TRIGGER auth_reject_actions BEFORE INSERT ON automation_actions FOR EACH ROW "
+        "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'test write failure';")
+    try:
+        request('/rules/auth-test-rule/enabled', admin, 'PUT', {'enabled': False}, expected=503)
+        assert {entry['id']: entry for entry in request('/rules', admin)['rules']} == expected_rules
+        assert sql("SELECT enabled FROM automation_rules WHERE id = 'auth-test-rule';").strip().endswith('1')
+        assert sql("SELECT COUNT(*) AS n FROM automation_actions WHERE rule_id = 'auth-test-rule';").strip().endswith('3')
+    finally:
+        sql('DROP TRIGGER auth_reject_actions;')
     rotate()
     request('/auth/me', admin, expected=401)
     admin = login()
     request('/devices/auth-test-device', admin, 'DELETE', expected=204)
-    print('PASS: login, route guards, roles, audit attribution, token hashing, WebSocket auth, '
+    sql("DELETE FROM automation_rules WHERE id IN ('auth-test-rule', 'auth-disabled-rule', 'auth-empty-rule');")
+    print('PASS: ordered rule persistence, enabled-state recovery, atomic rollback, login, route guards, roles, audit attribution, token hashing, WebSocket auth, '
           'logout, expiry, restart persistence, and password rotation')
 
 

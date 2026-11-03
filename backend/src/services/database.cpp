@@ -45,6 +45,27 @@ User UserRecord::toUser() const {
   return User{id, name, email, passwordHash, parseRole(role)};
 }
 
+AutomationRule RuleRecord::toRule() const {
+  AutomationRule rule{id, name, parseTriggerType(triggerType), triggerPayload};
+  for (const auto& action : actions) {
+    rule.addAction(action);
+  }
+  if (!enabled) {
+    rule.disable();
+  }
+  return rule;
+}
+
+RuleRecord RuleRecord::fromRule(const AutomationRule& rule, const std::string& householdId) {
+  return {rule.id(),
+          householdId,
+          rule.name(),
+          rule.enabled(),
+          std::string{toString(rule.triggerType())},
+          rule.triggerPayload(),
+          rule.actions()};
+}
+
 // ---------------------------------------------------------------------------
 // InMemoryDatabase
 // ---------------------------------------------------------------------------
@@ -119,6 +140,40 @@ bool InMemoryDatabase::deleteSession(const std::string& tokenHash) {
   std::erase_if(sessions_,
                 [&tokenHash](const auto& session) { return session.tokenHash == tokenHash; });
   return true;
+}
+
+std::optional<std::vector<RuleRecord>> InMemoryDatabase::listRules(const std::string& householdId) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
+  std::vector<RuleRecord> records;
+  for (const auto& record : rules_) {
+    if (record.householdId == householdId) {
+      records.push_back(record);
+    }
+  }
+  std::sort(records.begin(), records.end(),
+            [](const auto& left, const auto& right) { return left.id < right.id; });
+  return records;
+}
+
+bool InMemoryDatabase::saveRule(const RuleRecord& record) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
+  const auto match = std::find_if(rules_.begin(), rules_.end(),
+                                  [&](const auto& existing) { return existing.id == record.id; });
+  if (match == rules_.end()) {
+    rules_.push_back(record);
+  } else if (match->householdId == record.householdId) {
+    *match = record;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+bool InMemoryDatabase::deleteRule(const std::string& householdId, const std::string& ruleId) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
+  return std::erase_if(rules_, [&](const auto& rule) {
+           return rule.id == ruleId && rule.householdId == householdId;
+         }) > 0;
 }
 
 std::vector<DeviceRecord> InMemoryDatabase::listDevices(const std::string& householdId) {
@@ -312,6 +367,120 @@ class MariaDbDatabase : public Database {
       return true;
     } catch (const sql::SQLException&) {
       std::cerr << "[db] session deletion failed\n";
+      return false;
+    }
+  }
+
+  std::optional<std::vector<RuleRecord>> listRules(const std::string& householdId) override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+      std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
+          "SELECT r.id, r.household_id, r.name, r.enabled, r.trigger_type, r.trigger_payload, "
+          "a.id AS action_id, a.device_id, a.command, a.command_params "
+          "FROM automation_rules r LEFT JOIN automation_actions a ON a.rule_id = r.id "
+          "WHERE r.household_id = ? ORDER BY r.id, a.sequence_no"));
+      statement->setString(1, householdId);
+      std::unique_ptr<sql::ResultSet> rows(statement->executeQuery());
+      std::vector<RuleRecord> records;
+      while (rows->next()) {
+        const std::string id = rows->getString("id").c_str();
+        if (records.empty() || records.back().id != id) {
+          RuleRecord record;
+          record.id = id;
+          record.householdId = rows->getString("household_id").c_str();
+          record.name = rows->getString("name").c_str();
+          record.enabled = rows->getBoolean("enabled");
+          record.triggerType = rows->getString("trigger_type").c_str();
+          record.triggerPayload = nlohmann::json::parse(rows->getString("trigger_payload").c_str());
+          records.push_back(std::move(record));
+        }
+        if (!rows->isNull("action_id")) {
+          records.back().actions.push_back(
+              {rows->getString("device_id").c_str(), rows->getString("command").c_str(),
+               rows->isNull("command_params")
+                   ? nlohmann::json::object()
+                   : nlohmann::json::parse(rows->getString("command_params").c_str())});
+        }
+      }
+      return records;
+    } catch (const sql::SQLException&) {
+      std::cerr << "[db] rule read failed\n";
+    } catch (const nlohmann::json::exception&) {
+      std::cerr << "[db] invalid rule JSON\n";
+    }
+    return std::nullopt;
+  }
+
+  bool saveRule(const RuleRecord& record) override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+      connection_->setAutoCommit(false);
+      {
+        std::unique_ptr<sql::PreparedStatement> check(connection_->prepareStatement(
+            "SELECT household_id FROM automation_rules WHERE id = ? FOR UPDATE"));
+        check->setString(1, record.id);
+        std::unique_ptr<sql::ResultSet> rows(check->executeQuery());
+        if (rows->next() &&
+            std::string{rows->getString("household_id").c_str()} != record.householdId) {
+          connection_->rollback();
+          connection_->setAutoCommit(true);
+          return false;
+        }
+      }
+      std::unique_ptr<sql::PreparedStatement> rule(connection_->prepareStatement(
+          "INSERT INTO automation_rules (id, household_id, name, enabled, trigger_type, "
+          "trigger_payload) "
+          "VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), "
+          "enabled = VALUES(enabled), trigger_type = VALUES(trigger_type), "
+          "trigger_payload = VALUES(trigger_payload)"));
+      rule->setString(1, record.id);
+      rule->setString(2, record.householdId);
+      rule->setString(3, record.name);
+      rule->setBoolean(4, record.enabled);
+      rule->setString(5, record.triggerType);
+      rule->setString(6, record.triggerPayload.dump());
+      rule->executeUpdate();
+      std::unique_ptr<sql::PreparedStatement> clear(
+          connection_->prepareStatement("DELETE FROM automation_actions WHERE rule_id = ?"));
+      clear->setString(1, record.id);
+      clear->executeUpdate();
+      std::unique_ptr<sql::PreparedStatement> action(
+          connection_->prepareStatement("INSERT INTO automation_actions (rule_id, device_id, "
+                                        "sequence_no, command, command_params) "
+                                        "VALUES (?, ?, ?, ?, ?)"));
+      for (std::size_t index = 0; index < record.actions.size(); ++index) {
+        const auto& entry = record.actions[index];
+        action->setString(1, record.id);
+        action->setString(2, entry.deviceId);
+        action->setUInt64(3, index);
+        action->setString(4, entry.command);
+        action->setString(5, entry.params.dump());
+        action->executeUpdate();
+      }
+      connection_->commit();
+      connection_->setAutoCommit(true);
+      return true;
+    } catch (const sql::SQLException&) {
+      try {
+        connection_->rollback();
+        connection_->setAutoCommit(true);
+      } catch (const sql::SQLException&) {
+      }
+      std::cerr << "[db] rule write failed\n";
+      return false;
+    }
+  }
+
+  bool deleteRule(const std::string& householdId, const std::string& ruleId) override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+      std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
+          "DELETE FROM automation_rules WHERE id = ? AND household_id = ?"));
+      statement->setString(1, ruleId);
+      statement->setString(2, householdId);
+      return statement->executeUpdate() > 0;
+    } catch (const sql::SQLException&) {
+      std::cerr << "[db] rule deletion failed\n";
       return false;
     }
   }

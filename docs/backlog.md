@@ -47,15 +47,21 @@ than treating a stored token as proof of authentication. Record the acting user
 in command history. Verify incorrect passwords, expired and invalidated sessions,
 and unauthorized requests.
 
-**Why:** Login currently accepts any non-empty password for a known account,
-and bearer tokens are not enforced. Reliable identity is also a prerequisite
+**Why:** Previously, login accepted any non-empty password for a known account,
+and bearer tokens were not enforced. Reliable identity is also a prerequisite
 for household isolation, device permissions, and useful activity history.
 
 **Dependencies:** First core task; aligns with roadmap Step 1.
 
 ### 2. Preserve automation rules across restarts
 
-**Size: M · Importance: High**
+**Size: M · Importance: High · Status: Complete**
+
+**Delivered:** Household-scoped persistence for rule definitions, ordered actions,
+trigger payloads, and enabled state. Startup restores saved rules; failed writes
+leave the previous state intact and return an error. Verified with unit tests
+and a disposable MariaDB stack, including forced transaction failures. No schema
+migration is required. CI integration remains roadmap Step 3.
 
 **What:** Keep saved routines, their actions, and their enabled or disabled state
 when the hub restarts.
@@ -66,7 +72,7 @@ rules during startup. Cover deletion when that operation is exposed. Verify a
 save-and-restart flow against MariaDB as well as behavior in the in-memory store.
 Close the roadmap's SQL integration-test gap alongside this work.
 
-**Why:** Losing routines during a normal restart undermines trust and makes
+**Why:** Losing routines during a normal restart undermined trust and made
 automation difficult to use beyond a demo. Persistence provides the foundation
 for the rule editor and scheduler.
 
@@ -75,6 +81,10 @@ for the rule editor and scheduler.
 ### 3. Create and run scheduled routines from the dashboard
 
 **Size: XL · Importance: High**
+
+**Progress:** The manual routine form now supports device/action selection,
+parameters, ordering, validation, saving, and enable/disable. Scheduling inputs,
+timezone handling, next-run display, and the scheduler remain open.
 
 **What:** Let a household member create a routine such as “turn off the kitchen
 light every day at 22:00,” view its next run, and pause it.
@@ -197,7 +207,17 @@ follow the permissions model as it develops.
 
 ### 9. Run named scenes with one click
 
-**Size: M · Importance: Medium**
+**Size: M · Importance: Medium · Status: In progress**
+
+**Delivered:** Create named manual routines in the WebUI, choose supported
+commands and parameters, add/remove/reorder actions, save, enable/disable, and
+Run. Failed saves retain the draft; pending requests prevent repeated clicks.
+The initiating dashboard refreshes device states after running. Verified with
+frontend tests and a local browser flow against a disposable backend.
+
+**Remaining:** Per-device access follows task 7. The backend trigger response
+currently confirms which rule fired; reporting per-action or partial failures
+requires additional API support. The UI does not claim every action succeeded.
 
 **What:** Run a saved group of actions such as “Leaving home” from the dashboard.
 
@@ -231,10 +251,11 @@ Aligns with roadmap Step 4.
 
 ## Suggested delivery order
 
-Secure access is complete. Continue with persistent routines, including database
-integration coverage. Connection visibility is a useful parallel development track. Next,
-deliver the scheduler and a small rule editor for a visible automation milestone.
-Follow with one physical-device integration and onboarding for that device family.
+Secure access, rule persistence, and manual routine creation are complete. The
+database integration checks run locally; add them to CI next. Connection
+visibility is another useful task. Then add the scheduler and scheduling fields
+to the existing form. Follow with one physical-device integration and onboarding
+for that device family.
 
 Complete household isolation and assignments before expanding to multiple
 households or restricted members. Activity history, scenes, and state-based

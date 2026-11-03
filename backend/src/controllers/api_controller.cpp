@@ -242,8 +242,12 @@ void ApiController::registerRoutes(App& app) {
         }
 
         nlohmann::json created = rule.toJson();
-        if (!hub_.addRule(std::move(rule))) {
+        const auto result = hub_.addRule(std::move(rule));
+        if (result.status == RuleWriteStatus::Duplicate) {
           return errorResponse(409, "rule " + id + " already exists");
+        }
+        if (!result) {
+          return errorResponse(503, "could not save rule");
         }
         return jsonResponse(201, created);
       });
@@ -252,12 +256,16 @@ void ApiController::registerRoutes(App& app) {
       .methods(crow::HTTPMethod::PUT)(
           [this](const crow::request& request, const std::string& ruleId) {
             const std::optional<nlohmann::json> body = parseBody(request);
-            if (!body || !body->contains("enabled")) {
+            if (!body || !body->contains("enabled") || !body->at("enabled").is_boolean()) {
               return errorResponse(400, "'enabled' boolean is required");
             }
             const bool enabled = body->at("enabled").get<bool>();
-            if (!hub_.setRuleEnabled(ruleId, enabled)) {
+            const auto result = hub_.setRuleEnabled(ruleId, enabled);
+            if (result.status == RuleWriteStatus::NotFound) {
               return errorResponse(404, "unknown rule " + ruleId);
+            }
+            if (!result) {
+              return errorResponse(503, "could not save rule");
             }
             return jsonResponse(200, {{"id", ruleId}, {"enabled", enabled}});
           });

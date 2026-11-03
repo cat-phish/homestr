@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,14 @@
 #include "homestr/services/device_manager.hpp"
 
 namespace homestr {
+
+enum class RuleWriteStatus { Saved, Duplicate, NotFound, StorageError };
+
+struct RuleWriteResult {
+  RuleWriteStatus status;
+
+  explicit operator bool() const noexcept { return status == RuleWriteStatus::Saved; }
+};
 
 // `HomeStr` central controller: owns the Database and the DeviceManager and
 // coordinates the automation rules between them. The controllers hold a
@@ -26,13 +35,12 @@ class HomeStr {
 
   Database& database() noexcept { return *database_; }
 
-  const std::vector<AutomationRule>& rules() const noexcept { return rules_; }
+  std::vector<AutomationRule> rules() const;
 
-  // Returns false when a rule with the same id is already loaded, so the
-  // caller can answer 409 instead of stacking up duplicates.
-  bool addRule(AutomationRule rule);
+  // Persist before publishing changes; distinguish conflicts from storage failures.
+  RuleWriteResult addRule(AutomationRule rule);
 
-  bool setRuleEnabled(const std::string& ruleId, bool enabled);
+  RuleWriteResult setRuleEnabled(const std::string& ruleId, bool enabled);
 
   // Evaluates every rule against `event` and dispatches the actions of those
   // that match. Returns the ids of the rules that fired.
@@ -44,6 +52,7 @@ class HomeStr {
  private:
   std::unique_ptr<Database> database_;
   DeviceManager deviceManager_;
+  mutable std::mutex rulesMutex_;
   std::vector<AutomationRule> rules_;
   std::string householdId_;
 };

@@ -9,6 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "homestr/models/automation_rule.hpp"
 #include "homestr/models/user.hpp"
 
 namespace homestr {
@@ -59,6 +60,20 @@ struct SessionRecord {
   std::int64_t expiresAt = 0;
 };
 
+// Flat rule projection; action vector order maps to sequence_no.
+struct RuleRecord {
+  std::string id;
+  std::string householdId;
+  std::string name;
+  bool enabled = true;
+  std::string triggerType = "MANUAL";
+  nlohmann::json triggerPayload = nlohmann::json::object();
+  std::vector<RuleAction> actions;
+
+  AutomationRule toRule() const;
+  static RuleRecord fromRule(const AutomationRule& rule, const std::string& householdId);
+};
+
 // Persistence boundary. Controllers and services depend on this interface only,
 // so unit tests can substitute the in-memory implementation.
 class Database {
@@ -78,6 +93,11 @@ class Database {
   virtual std::optional<UserRecord> findSessionUser(const std::string& tokenHash,
                                                     std::int64_t now) = 0;
   virtual bool deleteSession(const std::string& tokenHash) = 0;
+
+  // nullopt means a read failure, distinct from a successful empty household.
+  virtual std::optional<std::vector<RuleRecord>> listRules(const std::string& householdId) = 0;
+  virtual bool saveRule(const RuleRecord& record) = 0;
+  virtual bool deleteRule(const std::string& householdId, const std::string& ruleId) = 0;
 
   virtual std::vector<DeviceRecord> listDevices(const std::string& householdId) = 0;
 
@@ -107,6 +127,9 @@ class InMemoryDatabase : public Database {
   std::optional<UserRecord> findSessionUser(const std::string& tokenHash,
                                             std::int64_t now) override;
   bool deleteSession(const std::string& tokenHash) override;
+  std::optional<std::vector<RuleRecord>> listRules(const std::string& householdId) override;
+  bool saveRule(const RuleRecord& record) override;
+  bool deleteRule(const std::string& householdId, const std::string& ruleId) override;
   std::vector<DeviceRecord> listDevices(const std::string& householdId) override;
   std::optional<DeviceRecord> findDevice(const std::string& deviceId) override;
   bool saveDevice(const DeviceRecord& record) override;
@@ -125,6 +148,7 @@ class InMemoryDatabase : public Database {
  private:
   mutable std::recursive_mutex mutex_;
   std::vector<SessionRecord> sessions_;
+  std::vector<RuleRecord> rules_;
   bool connected_ = false;
   std::vector<UserRecord> users_;
   std::vector<DeviceRecord> devices_;
