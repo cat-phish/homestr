@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -27,6 +29,7 @@ struct TriggerEvent {
   std::string kind;  // "schedule" | "device_state"
   std::string deviceId;
   nlohmann::json data = nlohmann::json::object();
+  nlohmann::json previousState = nlohmann::json::object();
 };
 
 // `AutomationRule` from the class diagram.
@@ -46,6 +49,10 @@ class AutomationRule {
   const nlohmann::json& triggerPayload() const noexcept { return triggerPayload_; }
 
   const std::vector<RuleAction>& actions() const noexcept { return actions_; }
+
+  std::optional<std::int64_t> lastFiredAt() const noexcept { return lastFiredAt_; }
+
+  void setLastFiredAt(std::optional<std::int64_t> instant) noexcept { lastFiredAt_ = instant; }
 
   void enable() noexcept { enabled_ = true; }
 
@@ -69,6 +76,7 @@ class AutomationRule {
   TriggerType triggerType_;
   nlohmann::json triggerPayload_;
   std::vector<RuleAction> actions_;
+  std::optional<std::int64_t> lastFiredAt_;
 };
 
 }  // namespace homestr

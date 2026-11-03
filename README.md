@@ -113,10 +113,10 @@ rather than erroring.
 | Argon2id password verification, persisted 24-hour sessions, logout revocation | Multi-household support — the hub loads one hard-coded household at boot |
 | Bearer-token enforcement on REST and WebSocket; admin-only device setup | Device health monitoring and physical device communication |
 | Device commands: `turnOn`, `turnOff`, `setBrightness`, `setColor`, `play`, `pause`, `setVolume`, `connect` | LAN discovery — `GET /devices/discover` returns an empty list, no mDNS/SSDP sweep |
-| Device state persisted to the subtype tables and reloaded on restart | Cron scheduler — `SCHEDULE` rules do not fire automatically |
+| Scheduled routines with timezones, next-run display, and durable run claims | Physical-device state subscriptions |
 | Audit trail in `device_events`, including failed commands | Rule editing and deletion endpoints are not built |
-| Dashboard aggregate, WebSocket push on every state change | Per-user device assignment — any authenticated caller can command any device in the household |
-| Persisted rules; WebUI manual routine creation, action ordering, Run and enable/disable | Scheduled/device-state routine editors and device setup screens |
+| Dashboard aggregate, live state/rule updates, bounded device-state trigger chains | Per-user device assignment — any authenticated caller can command any device in the household |
+| Persisted rules; WebUI manual/scheduled/device-state creation and ordered actions | Device setup screens |
 
 Core backend gaps above are tracked under "Open items" in
 [`specs/domain-model.md`](specs/domain-model.md), and sequenced into work items
@@ -146,7 +146,7 @@ The named `/build` volume keeps the fetched dependencies between runs. On a
 host with CMake and a C++20 compiler you can skip Docker entirely:
 
 ```bash
-# Install libsodium development headers and pkg-config first.
+# Install libsodium development headers, pkg-config, and tzdata first.
 cmake -B backend/build -S backend -DCMAKE_BUILD_TYPE=Debug -DHOMESTR_WITH_MARIADB=OFF
 cmake --build backend/build -j"$(nproc)"
 ctest --test-dir backend/build --output-on-failure
@@ -175,21 +175,44 @@ device cards and one rule:
 | Porch Light (offline) | Greyed out, every control disabled |
 | Rule "Lights out at 22:00" | Enable/Disable toggle |
 
-**Create a manual routine.** Under **Automation routines**, choose **New routine**.
-Name it, select a device and command, and enter any brightness, color, volume, or
-optional track settings. Use **Add action**, **Move up**, **Move down**, and
-**Remove** to arrange the actions, then choose **Save routine**. At least one
-action is required. A failed save keeps your draft available for retrying.
+**Create a routine.** Under **Automation routines**, choose **New routine**.
+Name it and choose **When to run**:
 
-New routines are enabled. **Run** triggers their actions in the displayed order
-and refreshes device states; **Disable** prevents running the routine until it
-is enabled again. The trigger endpoint does not report individual action
-outcomes, so the confirmation says the routine was triggered. Check device
-states to confirm the result, especially for offline devices. Saved routines
-and their enabled state survive a backend restart.
+- **Manually:** use **Run** on the saved routine.
+- **On a schedule:** choose a time, weekdays, and IANA timezone, such as
+  `America/Los_Angeles`. The form defaults to the browser timezone. The dashboard
+  shows the next run in that timezone. Legacy API schedules without a timezone
+  use UTC.
+- **When a device changes:** choose a source device, property, and the value it
+  must become. Power conditions work for every device; lights add brightness and
+  color, and speakers add connection, volume, and playback state.
 
-The WebUI currently creates manual routines. Scheduling, device-state triggers,
-and editing/deleting saved routines remain future work.
+Select a device and command for each action and enter any brightness, color,
+volume, or optional track settings. Use **Add action**, **Move up**, **Move down**,
+and **Remove** to arrange actions, then choose **Save routine**. At least one
+action is required. Failed saves retain your draft for retrying.
+
+New routines are enabled. **Disable** pauses any trigger type; **Enable** resumes
+it. Rules, trigger configuration, and enabled state survive backend restarts.
+Manual **Run** refreshes device states; automatic actions push live updates to
+connected dashboards. Trigger confirmation does not report individual action
+outcomes, so check device states to confirm the result.
+
+**Timing and chains.** Missed schedule occurrences are skipped; there is no
+catch-up after downtime. Nonexistent spring-forward times are skipped, and a
+repeated fall-back local minute runs only on its first occurrence. A scheduled
+minute is claimed before dispatch to prevent replay: a crash after claiming may
+leave actions incomplete, with no automatic retry.
+
+State conditions fire when the watched value changes into the selected value,
+not when an unrelated property changes or a command leaves the value unchanged.
+Automation actions can trigger other routines. Each rule runs at most once per
+root event chain, with limits of 64 rules and 256 actions to stop circular or
+excessive chains. Device changes currently come from this app's simulated
+commands and routines; physical-device monitoring remains a separate task.
+
+Editing/deleting saved routines and per-action execution results remain future
+work.
 
 **Authenticated API examples.** Set `HOMESTR_TOKEN` to a token returned by
 `POST /api/v1/auth/login` with your email and password. Every API request below
@@ -404,6 +427,7 @@ and build volumes. It binds the API only to loopback on port 48080 (override wit
 ```bash
 docker compose -f docker-compose.auth-test.yml up -d --build --wait --wait-timeout 300
 python3 scripts/test-auth.py docker-compose.auth-test.yml http://localhost:48080
+python3 scripts/test-triggers.py docker-compose.auth-test.yml http://localhost:48080
 docker compose -f docker-compose.auth-test.yml down -v
 ```
 
@@ -412,5 +436,7 @@ route permissions, audit attribution, WebSocket authentication and revocation,
 expiry, and session/device/rule persistence across backend restarts. It also
 verifies action order, disabled-state recovery, and transaction rollback after
 forced write failures. Do not point it
-at a database you use. The manual persistence check above remains useful for
-other SQL changes.
+at a database you use. The trigger smoke test additionally verifies typed
+conditions, no-op suppression, circular-chain protection, RULE audit attribution,
+a real scheduler tick (up to one minute of waiting), and durable claims after
+restart. The manual persistence check above remains useful for other SQL changes.

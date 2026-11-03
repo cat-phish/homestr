@@ -91,6 +91,23 @@ foreach(crowTarget Crow crow)
   endif()
 endforeach()
 
+# Cron parsing and timezone conversion use pinned libraries and the OS tz database.
+FetchContent_Declare(croncpp
+  GIT_REPOSITORY https://github.com/mariusbancila/croncpp.git
+  GIT_TAG v2023.03.30 GIT_SHALLOW TRUE)
+FetchContent_GetProperties(croncpp)
+if(NOT croncpp_POPULATED)
+  FetchContent_Populate(croncpp)
+endif()
+set(BUILD_TZ_LIB ON CACHE BOOL "" FORCE)
+set(USE_SYSTEM_TZ_DB ON CACHE BOOL "" FORCE)
+set(ENABLE_DATE_TESTING OFF CACHE BOOL "" FORCE)
+set(ENABLE_DATE_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(date_src
+  GIT_REPOSITORY https://github.com/HowardHinnant/date.git
+  GIT_TAG v3.0.3 GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(date_src)
+
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
@@ -128,11 +145,15 @@ add_library(
   src/services/device_manager.cpp
   src/services/auth_service.cpp
   src/services/database.cpp
-  src/services/home_str.cpp)
+  src/services/home_str.cpp
+  src/services/schedule.cpp)
 
 target_include_directories(homestr_core PUBLIC include)
+target_include_directories(homestr_core SYSTEM PRIVATE ${croncpp_SOURCE_DIR}/include)
+get_target_property(dateIncludes date INTERFACE_INCLUDE_DIRECTORIES)
+set_target_properties(date PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${dateIncludes}")
 target_link_libraries(homestr_core PUBLIC nlohmann_json::nlohmann_json
-                                          Threads::Threads PkgConfig::SODIUM
+                                          Threads::Threads PkgConfig::SODIUM date::date-tz
                                    PRIVATE homestr_warnings)
 
 if(HOMESTR_MARIADB_AVAILABLE)
@@ -178,6 +199,7 @@ if(HOMESTR_BUILD_TESTS)
                                tests/database_test.cpp
                                tests/home_str_test.cpp
                                tests/rule_persistence_test.cpp
+                               tests/trigger_engine_test.cpp
                                tests/light_test.cpp
                                tests/smart_device_test.cpp
                                tests/smart_speaker_test.cpp

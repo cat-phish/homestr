@@ -62,11 +62,19 @@ bool AutomationRule::evaluate(const TriggerEvent& event) const {
       }
       // An absent "equals" clause matches any state change of that device.
       if (!triggerPayload_.contains("equals")) {
-        return true;
+        if (!triggerPayload_.contains("attribute") || event.previousState.empty()) {
+          return true;
+        }
+        const auto attribute = triggerPayload_.at("attribute").get<std::string>();
+        return event.data.contains(attribute) &&
+               (!event.previousState.contains(attribute) ||
+                event.previousState.at(attribute) != event.data.at(attribute));
       }
       const std::string attribute = triggerPayload_.value("attribute", std::string{"status"});
       return event.data.contains(attribute) &&
-             event.data.at(attribute) == triggerPayload_.at("equals");
+             event.data.at(attribute) == triggerPayload_.at("equals") &&
+             (!event.previousState.contains(attribute) ||
+              event.previousState.at(attribute) != triggerPayload_.at("equals"));
     }
 
     case TriggerType::Manual:

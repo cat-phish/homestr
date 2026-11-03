@@ -196,9 +196,13 @@ CommandResult DeviceManager::apply(SmartDevice& device, const std::string& comma
 }
 
 CommandResult DeviceManager::sendCommand(const std::string& deviceId, const std::string& command,
-                                         const nlohmann::json& params, const std::string& actorId) {
+                                         const nlohmann::json& params, const std::string& actorId,
+                                         const std::string& actorType) {
   CommandResult result;
   DeviceRecord record;
+  nlohmann::json before;
+  nlohmann::json after;
+  StateObserver observer;
 
   {
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -209,7 +213,10 @@ CommandResult DeviceManager::sendCommand(const std::string& deviceId, const std:
     if (match == devices_.end()) {
       return CommandResult::failure("unknown device " + deviceId);
     }
+    before = (*match)->toJson();
     result = apply(**match, command, params);
+    after = (*match)->toJson();
+    observer = observer_;
     record = project(**match);
   }
 
@@ -217,9 +224,27 @@ CommandResult DeviceManager::sendCommand(const std::string& deviceId, const std:
   if (result.ok) {
     database_.saveDevice(record);
   }
-  database_.recordEvent(deviceId, actorId.empty() ? "SYSTEM" : "USER", actorId, command, params,
+  database_.recordEvent(deviceId, actorId.empty() ? "SYSTEM" : actorType, actorId, command, params,
                         result.ok);
+  if (result.ok && before != after && observer) {
+    observer(before, after);
+  }
   return result;
+}
+
+void DeviceManager::setStateObserver(StateObserver observer) {
+  const std::lock_guard<std::mutex> lock(mutex_);
+  observer_ = std::move(observer);
+}
+
+std::optional<nlohmann::json> DeviceManager::state(const std::string& deviceId) const {
+  const std::lock_guard<std::mutex> lock(mutex_);
+  for (const auto& device : devices_) {
+    if (device->id() == deviceId) {
+      return device->toJson();
+    }
+  }
+  return std::nullopt;
 }
 
 nlohmann::json DeviceManager::snapshot() const {

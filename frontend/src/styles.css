@@ -186,3 +186,39 @@ button:disabled {
 .rule-form__buttons {
   margin-top: 1rem;
 }
+
+.rule-form__trigger {
+  margin: 1rem 0;
+}
+
+.trigger-settings {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.trigger-settings label {
+  display: block;
+}
+
+.trigger-settings input:not([type='checkbox']),
+.trigger-settings select {
+  width: 100%;
+  max-width: 28rem;
+}
+
+.trigger-settings small {
+  display: block;
+}
+
+.schedule-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+
+.schedule-days label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}

@@ -80,11 +80,14 @@ for the rule editor and scheduler.
 
 ### 3. Create and run scheduled routines from the dashboard
 
-**Size: XL · Importance: High**
+**Size: XL · Importance: High · Status: Complete**
 
-**Progress:** The manual routine form now supports device/action selection,
-parameters, ordering, validation, saving, and enable/disable. Scheduling inputs,
-timezone handling, next-run display, and the scheduler remain open.
+**Delivered:** A scheduler, validated five-field cron configuration, per-rule
+IANA timezone handling, weekday/time inputs, and next-run display. Disabled
+rules pause execution. Missed runs and nonexistent DST times are skipped;
+repeated local minutes run only on the first occurrence. Durable scheduled-minute
+claims prevent replay after restart. Verified with unit tests and disposable
+MariaDB/browser checks, including a real minute-boundary execution.
 
 **What:** Let a household member create a routine such as “turn off the kitchen
 light every day at 22:00,” view its next run, and pause it.
@@ -233,7 +236,18 @@ integration makes scenes useful beyond the simulator.
 
 ### 10. Trigger routines from device state changes
 
-**Size: L · Importance: Medium**
+**Size: L · Importance: Medium · Status: Complete**
+
+**Delivered:** Source-device/property/typed-value controls in the WebUI, validated
+API conditions, and automatic evaluation when a property enters its configured
+value. No-op/failed commands and startup hydration do not fire rules. Descendant
+events are queued, each rule runs once per chain, and rule/action limits bound
+execution. Automation commands have RULE audit attribution and push live state
+updates. Verified with unit tests and disposable MariaDB/browser checks.
+
+**Integration follow-up:** Physical-device state ingestion uses the same change
+path when drivers and monitoring are implemented under task 4. The current app
+is still a device simulator.
 
 **What:** Run an action when a device enters a selected state.
 
@@ -253,9 +267,9 @@ Aligns with roadmap Step 4.
 
 Secure access, rule persistence, and manual routine creation are complete. The
 database integration checks run locally; add them to CI next. Connection
-visibility is another useful task. Then add the scheduler and scheduling fields
-to the existing form. Follow with one physical-device integration and onboarding
-for that device family.
+visibility is another useful task. Scheduled and device-state triggers are now
+available. Continue with one physical-device integration and onboarding for that
+device family.
 
 Complete household isolation and assignments before expanding to multiple
 households or restricted members. Activity history, scenes, and state-based

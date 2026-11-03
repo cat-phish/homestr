@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS automation_rules (
     enabled         BOOLEAN      NOT NULL DEFAULT TRUE,
     trigger_type    ENUM('SCHEDULE', 'DEVICE_STATE', 'MANUAL') NOT NULL,
     trigger_payload JSON         NOT NULL,  -- e.g. {"cron":"0 22 * * *"}
-    last_fired_at   TIMESTAMP    NULL,
+    last_fired_at   TIMESTAMP    NULL,  -- durable scheduled-minute claim (UTC instant)
     created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
                                  ON UPDATE CURRENT_TIMESTAMP,

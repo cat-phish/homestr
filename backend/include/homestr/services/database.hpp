@@ -69,6 +69,7 @@ struct RuleRecord {
   std::string triggerType = "MANUAL";
   nlohmann::json triggerPayload = nlohmann::json::object();
   std::vector<RuleAction> actions;
+  std::optional<std::int64_t> lastFiredAt;
 
   AutomationRule toRule() const;
   static RuleRecord fromRule(const AutomationRule& rule, const std::string& householdId);
@@ -97,6 +98,8 @@ class Database {
   // nullopt means a read failure, distinct from a successful empty household.
   virtual std::optional<std::vector<RuleRecord>> listRules(const std::string& householdId) = 0;
   virtual bool saveRule(const RuleRecord& record) = 0;
+  virtual bool claimScheduledRun(const std::string& householdId, const std::string& ruleId,
+                                 std::int64_t minute) = 0;
   virtual bool deleteRule(const std::string& householdId, const std::string& ruleId) = 0;
 
   virtual std::vector<DeviceRecord> listDevices(const std::string& householdId) = 0;
@@ -129,6 +132,8 @@ class InMemoryDatabase : public Database {
   bool deleteSession(const std::string& tokenHash) override;
   std::optional<std::vector<RuleRecord>> listRules(const std::string& householdId) override;
   bool saveRule(const RuleRecord& record) override;
+  bool claimScheduledRun(const std::string& householdId, const std::string& ruleId,
+                         std::int64_t minute) override;
   bool deleteRule(const std::string& householdId, const std::string& ruleId) override;
   std::vector<DeviceRecord> listDevices(const std::string& householdId) override;
   std::optional<DeviceRecord> findDevice(const std::string& deviceId) override;

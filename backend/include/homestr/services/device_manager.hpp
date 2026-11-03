@@ -1,7 +1,9 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -52,7 +54,12 @@ class DeviceManager {
   // Dispatches a domain command ("turnOn", "setBrightness", "play", ...) and
   // persists the resulting state plus an audit event.
   CommandResult sendCommand(const std::string& deviceId, const std::string& command,
-                            const nlohmann::json& params, const std::string& actorId);
+                            const nlohmann::json& params, const std::string& actorId,
+                            const std::string& actorType = "USER");
+
+  using StateObserver = std::function<void(const nlohmann::json&, const nlohmann::json&)>;
+  void setStateObserver(StateObserver observer);
+  std::optional<nlohmann::json> state(const std::string& deviceId) const;
 
   // snapshot of every loaded device, as served by GET /devices.
   nlohmann::json snapshot() const;
@@ -75,6 +82,7 @@ class DeviceManager {
   std::vector<std::unique_ptr<SmartDevice>> devices_;
   std::vector<DeviceRecord> discovered_;
   std::string householdId_;
+  StateObserver observer_;
 };
 
 }  // namespace homestr

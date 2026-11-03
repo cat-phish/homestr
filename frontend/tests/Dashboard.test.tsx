@@ -128,3 +128,21 @@ describe('dashboard routines', () => {
     expect(within(screen.getByRole('main')).getByText('No routines yet.')).toBeInTheDocument();
   });
 });
+
+describe('automatic routine summaries', () => {
+  it('shows the next scheduled run in the configured timezone', async () => {
+    vi.mocked(api.getDashboard).mockResolvedValue({
+      ...initial,
+      rules: [
+        {
+          ...initial.rules[2]!,
+          trigger: { cron: '0 22 * * *', timezone: 'America/Los_Angeles' },
+          nextRunAt: '2026-11-04T06:00:00Z',
+        },
+      ],
+    });
+    render(<Dashboard />);
+    expect(await screen.findByText(/Next run:/)).toHaveTextContent('America/Los_Angeles');
+    expect(screen.queryByRole('button', { name: 'Run Scheduled' })).not.toBeInTheDocument();
+  });
+});

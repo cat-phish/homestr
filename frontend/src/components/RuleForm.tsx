@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react';
 
 import { api, ApiError } from '@/api/client';
-import type { AutomationRule, Device, RuleAction } from '@/types';
+import type { AutomationRule, Device, RuleAction, TriggerType } from '@/types';
 import { createId } from '@/utils/id';
+import { triggerProperties } from '@/utils/triggers';
 
 interface RuleFormProps {
   devices: Device[];
@@ -56,6 +57,18 @@ function commands(device: Device | undefined): { value: string; label: string }[
 
 export function RuleForm({ devices, onSaved, onCancel }: RuleFormProps) {
   const [name, setName] = useState('');
+  const [triggerType, setTriggerType] = useState<TriggerType>('MANUAL');
+  const [time, setTime] = useState('22:00');
+  const [timezone, setTimezone] = useState(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+  );
+  const [days, setDays] = useState([0, 1, 2, 3, 4, 5, 6]);
+  const [sourceId, setSourceId] = useState('');
+  const [attribute, setAttribute] = useState('powerOn');
+  const [condition, setCondition] = useState('true');
+  const source = devices.find((device) => device.id === sourceId);
+  const properties = triggerProperties(source);
+  const property = properties.find((entry) => entry.value === attribute);
   const [actions, setActions] = useState<DraftAction[]>(() => [newAction()]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +105,54 @@ export function RuleForm({ devices, onSaved, onCancel }: RuleFormProps) {
     if (trimmedName.length === 0 || trimmedName.length > 100) {
       setError('Enter a routine name of 1 to 100 characters.');
       return;
+    }
+    let trigger: Record<string, unknown> = {};
+    if (triggerType === 'SCHEDULE') {
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+        setError('Choose a valid time.');
+        return;
+      }
+      try {
+        new Intl.DateTimeFormat(undefined, { timeZone: timezone.trim() }).format();
+      } catch {
+        setError('Enter a valid timezone, such as America/Los_Angeles or UTC.');
+        return;
+      }
+      if (timezone.trim() === '') {
+        setError('Enter a valid timezone.');
+        return;
+      }
+      if (days.length === 0) {
+        setError('Select at least one day.');
+        return;
+      }
+      const [hour, minute] = time.split(':');
+      trigger = {
+        cron: `${Number(minute)} ${Number(hour)} * * ${days.length === 7 ? '*' : [...days].sort().join(',')}`,
+        timezone: timezone.trim(),
+      };
+    } else if (triggerType === 'DEVICE_STATE') {
+      if (source === undefined || property === undefined) {
+        setError('Select a trigger device and property.');
+        return;
+      }
+      let equals: string | number | boolean = condition;
+      if (property.kind === 'boolean') {
+        equals = condition === 'true';
+      }
+      if (property.kind === 'number') {
+        const number = Number(condition);
+        if (condition.trim() === '' || !Number.isInteger(number) || number < 0 || number > 100) {
+          setError('The condition must be a whole number from 0 to 100.');
+          return;
+        }
+        equals = number;
+      }
+      if (property.kind === 'color' && !/^#[0-9a-f]{6}$/i.test(condition)) {
+        setError('Choose a valid condition color.');
+        return;
+      }
+      trigger = { deviceId: sourceId, attribute, equals };
     }
     const validated: RuleAction[] = [];
     for (const [index, action] of actions.entries()) {
@@ -135,8 +196,8 @@ export function RuleForm({ devices, onSaved, onCancel }: RuleFormProps) {
         id: ruleId.current,
         name: trimmedName,
         enabled: true,
-        triggerType: 'MANUAL',
-        trigger: {},
+        triggerType,
+        trigger,
         actions: validated,
       });
       onSaved(saved);
@@ -160,7 +221,9 @@ export function RuleForm({ devices, onSaved, onCancel }: RuleFormProps) {
       onSubmit={(event) => void save(event)}
     >
       <h3 id="routine-editor-title">New routine</h3>
-      <p>Choose actions to run together when you press Run. Actions run in the order shown.</p>
+      <p>
+        Choose when this routine runs and which actions it performs. Actions run in the order shown.
+      </p>
       <fieldset className="rule-form__fields" disabled={pending}>
         <label htmlFor="routine-name">Routine name</label>
         <input
@@ -172,6 +235,152 @@ export function RuleForm({ devices, onSaved, onCancel }: RuleFormProps) {
           placeholder="e.g. Leaving home"
           onChange={(event) => setName(event.target.value)}
         />
+        <div className="rule-form__trigger">
+          <label htmlFor="trigger-type">When to run</label>
+          <select
+            id="trigger-type"
+            value={triggerType}
+            onChange={(event) => setTriggerType(event.target.value as TriggerType)}
+          >
+            <option value="MANUAL">Manually</option>
+            <option value="SCHEDULE">On a schedule</option>
+            <option value="DEVICE_STATE">When a device changes</option>
+          </select>
+          {triggerType === 'SCHEDULE' && (
+            <div className="trigger-settings">
+              <div>
+                <label htmlFor="schedule-time">Time</label>
+                <input
+                  id="schedule-time"
+                  type="time"
+                  required
+                  value={time}
+                  onChange={(event) => setTime(event.target.value)}
+                />
+              </div>
+              <div>
+                <label htmlFor="schedule-timezone">Timezone</label>
+                <input
+                  id="schedule-timezone"
+                  required
+                  value={timezone}
+                  onChange={(event) => setTimezone(event.target.value)}
+                  placeholder="America/Los_Angeles"
+                />
+                <small>Uses this timezone. Missed runs are skipped.</small>
+              </div>
+              <fieldset className="schedule-days">
+                <legend>Days</legend>
+                {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(
+                  (day, index) => (
+                    <label key={day}>
+                      <input
+                        type="checkbox"
+                        checked={days.includes(index)}
+                        onChange={(event) =>
+                          setDays((current) =>
+                            event.target.checked
+                              ? [...current, index]
+                              : current.filter((entry) => entry !== index),
+                          )
+                        }
+                      />
+                      {day}
+                    </label>
+                  ),
+                )}
+              </fieldset>
+            </div>
+          )}
+          {triggerType === 'DEVICE_STATE' && (
+            <div className="trigger-settings">
+              <div>
+                <label htmlFor="trigger-device">Trigger device</label>
+                <select
+                  id="trigger-device"
+                  value={sourceId}
+                  required
+                  onChange={(event) => {
+                    setSourceId(event.target.value);
+                    setAttribute('powerOn');
+                    setCondition('true');
+                  }}
+                >
+                  <option value="">Select a device</option>
+                  {devices.map((device) => (
+                    <option key={device.id} value={device.id}>
+                      {device.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="trigger-property">Property</label>
+                <select
+                  id="trigger-property"
+                  disabled={source === undefined}
+                  value={attribute}
+                  onChange={(event) => {
+                    const selected = properties.find((entry) => entry.value === event.target.value);
+                    setAttribute(event.target.value);
+                    setCondition(
+                      selected?.kind === 'number'
+                        ? '50'
+                        : selected?.kind === 'color'
+                          ? '#ffffff'
+                          : selected?.kind === 'playback'
+                            ? 'PLAYING'
+                            : 'true',
+                    );
+                  }}
+                >
+                  {properties.map((entry) => (
+                    <option key={entry.value} value={entry.value}>
+                      {entry.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="trigger-condition">Becomes</label>
+                {property?.kind === 'boolean' ? (
+                  <select
+                    id="trigger-condition"
+                    value={condition}
+                    onChange={(event) => setCondition(event.target.value)}
+                  >
+                    <option value="true">{attribute === 'connected' ? 'Connected' : 'On'}</option>
+                    <option value="false">
+                      {attribute === 'connected' ? 'Disconnected' : 'Off'}
+                    </option>
+                  </select>
+                ) : property?.kind === 'playback' ? (
+                  <select
+                    id="trigger-condition"
+                    value={condition}
+                    onChange={(event) => setCondition(event.target.value)}
+                  >
+                    <option value="PLAYING">Playing</option>
+                    <option value="PAUSED">Paused</option>
+                    <option value="STOPPED">Stopped</option>
+                  </select>
+                ) : (
+                  <input
+                    id="trigger-condition"
+                    type={property?.kind === 'color' ? 'color' : 'number'}
+                    min={0}
+                    max={100}
+                    step={1}
+                    required
+                    value={condition}
+                    onChange={(event) => setCondition(event.target.value)}
+                  />
+                )}
+              </div>
+              <p>Runs when this property changes into the selected value.</p>
+            </div>
+          )}
+        </div>
         <ol className="rule-form__actions">
           {actions.map((action, index) => {
             const device = devices.find((entry) => entry.id === action.deviceId);

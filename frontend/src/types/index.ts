@@ -67,6 +67,7 @@ export interface AutomationRule {
   triggerType: TriggerType;
   trigger: Record<string, unknown>;
   actions: RuleAction[];
+  nextRunAt?: string | null;
 }
 
 export interface Dashboard {

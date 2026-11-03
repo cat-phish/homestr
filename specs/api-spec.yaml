@@ -330,6 +330,9 @@ paths:
       description: |
         Persists the rule and its ordered actions atomically for the loaded
         household before returning success. Failed writes leave no partial rule.
+        Validates trigger configuration: five numeric cron fields plus an optional
+        IANA timezone (default UTC), or a registered source device and typed
+        state condition. Invalid triggers return 400.
       operationId: createRule
       requestBody:
         required: true
@@ -707,14 +710,25 @@ components:
         triggerType:
           type: string
           enum: [SCHEDULE, DEVICE_STATE, MANUAL]
+        nextRunAt:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+          description: Next scheduled occurrence in UTC; null if disabled. Present for schedules.
         trigger:
           type: object
           description: |
-            Shape depends on `triggerType`:
-              * SCHEDULE     -- `{"cron":"0 22 * * *"}`
-              * DEVICE_STATE -- `{"deviceId":"...","attribute":"status","equals":"ONLINE"}`
-                                (`equals` omitted matches any change)
-              * MANUAL       -- `{}`
+            Shape depends on triggerType:
+              * SCHEDULE -- {"cron":"0 22 * * *","timezone":"America/Los_Angeles"}.
+                Five numeric fields, Sunday=0. Missing timezone defaults to UTC.
+                Both day fields must match. Missed runs and nonexistent DST times
+                are skipped; repeated local minutes run only on their first occurrence.
+              * DEVICE_STATE -- {"deviceId":"...","attribute":"powerOn","equals":true}.
+                Fires on entering the matching value. Supported attributes depend
+                on the source device type. Without equals, watch attribute changes;
+                without attribute, watch any device change.
+              * MANUAL -- {}.
           additionalProperties: true
         actions:
           type: array

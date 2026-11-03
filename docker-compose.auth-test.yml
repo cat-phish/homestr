@@ -1,6 +1,7 @@
 # Disposable auth integration stack. Uses separate data and build volumes.
 # docker compose -f docker-compose.auth-test.yml up -d --build --wait --wait-timeout 300
 # python3 scripts/test-auth.py docker-compose.auth-test.yml http://localhost:48080
+# python3 scripts/test-triggers.py docker-compose.auth-test.yml http://localhost:48080
 # docker compose -f docker-compose.auth-test.yml down -v
 name: homestr-auth-test
 

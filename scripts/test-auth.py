@@ -51,6 +51,12 @@ def main():
             data = response.read()
             return json.loads(data) if data else None
 
+    def core_rule(rule):
+        return {key: value for key, value in rule.items() if key != 'nextRunAt'}
+
+    def rules_by_id(records):
+        return {entry['id']: core_rule(entry) for entry in records}
+
     def login(email='admin@homestr.local'):
         return request('/auth/login', method='POST', body={'email': email, 'password': password})['token']
 
@@ -147,7 +153,7 @@ def main():
                       trigger={'cron': '0 22 * * *'}, actions=[])
     sql("DELETE FROM automation_rules WHERE id IN ('auth-test-rule', 'auth-disabled-rule', 'auth-empty-rule');")
     for entry in [rule, disabled_rule, empty_rule]:
-        assert request('/rules', admin, 'POST', entry, expected=201) == entry
+        assert core_rule(request('/rules', admin, 'POST', entry, expected=201)) == entry
     request('/rules', admin, 'POST', dict(rule, name='Duplicate'), expected=409)
     request('/rules/auth-test-rule/enabled', admin, 'PUT', {'enabled': 'false'}, expected=400)
     request('/rules/unknown/enabled', admin, 'PUT', {'enabled': False}, expected=404)
@@ -165,7 +171,7 @@ def main():
     assert ws.headers.get('sec-websocket-protocol') == 'homestr'
     opcode, payload = ws.frame()
     assert opcode == 1 and json.loads(payload)['type'] == 'snapshot'
-    assert {entry['id']: entry for entry in json.loads(payload)['payload']['rules']} == expected_rules
+    assert rules_by_id(json.loads(payload)['payload']['rules']) == expected_rules
     request('/auth/logout', admin, 'POST', expected=204)
     opcode, payload = ws.frame()
     assert opcode == 8 and struct.unpack('!H', payload[:2])[0] == 4001
@@ -195,8 +201,8 @@ def main():
     else:
         raise AssertionError('Backend did not recover after restart')
     assert request('/devices/auth-test-device', admin)['powerOn']
-    assert {entry['id']: entry for entry in request('/rules', admin)['rules']} == expected_rules
-    assert {entry['id']: entry for entry in request('/dashboard', admin)['rules']} == expected_rules
+    assert rules_by_id(request('/rules', admin)['rules']) == expected_rules
+    assert rules_by_id(request('/dashboard', admin)['rules']) == expected_rules
     request('/rules/auth-test-rule/trigger', admin, 'POST', expected=404)
     assert request('/devices/auth-test-device', admin)['powerOn']
     request('/rules/auth-test-rule/enabled', admin, 'PUT', {'enabled': True})
@@ -210,7 +216,7 @@ def main():
             time.sleep(0.25)
     else:
         raise AssertionError('Backend did not recover after second restart')
-    assert {entry['id']: entry for entry in request('/rules', admin)['rules']} == expected_rules
+    assert rules_by_id(request('/rules', admin)['rules']) == expected_rules
     request('/rules/auth-test-rule/trigger', admin, 'POST')
     state = request('/devices/auth-test-device', admin)
     assert not state['powerOn'] and state['brightness'] == 17
@@ -232,7 +238,7 @@ def main():
         "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'test write failure';")
     try:
         request('/rules/auth-test-rule/enabled', admin, 'PUT', {'enabled': False}, expected=503)
-        assert {entry['id']: entry for entry in request('/rules', admin)['rules']} == expected_rules
+        assert rules_by_id(request('/rules', admin)['rules']) == expected_rules
         assert sql("SELECT enabled FROM automation_rules WHERE id = 'auth-test-rule';").strip().endswith('1')
         assert sql("SELECT COUNT(*) AS n FROM automation_actions WHERE rule_id = 'auth-test-rule';").strip().endswith('3')
     finally:

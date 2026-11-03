@@ -4,6 +4,7 @@ import { api, ApiError } from '@/api/client';
 import { subscribe } from '@/api/websocket';
 import { DeviceCard } from '@/components/DeviceCard';
 import { RuleForm } from '@/components/RuleForm';
+import { nextRunLabel, stateTriggerLabel } from '@/utils/triggers';
 import type { AutomationRule, Device, ServerEvent } from '@/types';
 
 export function Dashboard() {
@@ -127,7 +128,11 @@ export function Dashboard() {
     setRules((current) => [...current.filter((entry) => entry.id !== rule.id), rule]);
     setCreating(false);
     setError(null);
-    setMessage('Routine saved. Use Run to trigger it.');
+    setMessage(
+      rule.triggerType === 'MANUAL'
+        ? 'Routine saved. Use Run to trigger it.'
+        : 'Routine saved. It will run automatically when its trigger matches.',
+    );
   };
 
   return (
@@ -185,6 +190,10 @@ export function Dashboard() {
                   · {rule.actions.length} {rule.actions.length === 1 ? 'action' : 'actions'} ·{' '}
                   {rule.enabled ? 'Enabled' : 'Disabled'}
                 </small>
+                {rule.triggerType === 'SCHEDULE' && <small>{nextRunLabel(rule)}</small>}
+                {rule.triggerType === 'DEVICE_STATE' && (
+                  <small>{stateTriggerLabel(rule, devices)}</small>
+                )}
               </div>
               <div className="routine-buttons">
                 {rule.triggerType === 'MANUAL' && (

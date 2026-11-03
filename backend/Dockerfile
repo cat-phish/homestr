@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
       libssl-dev \
       ninja-build \
       pkg-config \
+      tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 --recurse-submodules --shallow-submodules \
@@ -88,6 +89,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
       ca-certificates \
       libmariadb3 \
       libsodium23 \
+      tzdata \
       libssl3 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --shell /usr/sbin/nologin homestr

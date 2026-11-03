@@ -203,3 +203,81 @@ describe('manual routine creation', () => {
     expect(create).not.toHaveBeenCalled();
   });
 });
+
+describe('automatic routine triggers', () => {
+  it('creates a timezone-aware weekday schedule', async () => {
+    const { create } = setup();
+    await userEvent.type(screen.getByLabelText('Routine name'), 'Weekday bedtime');
+    await userEvent.selectOptions(screen.getByLabelText('When to run'), 'SCHEDULE');
+    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '22:30' } });
+    fireEvent.change(screen.getByLabelText('Timezone'), {
+      target: { value: 'America/Los_Angeles' },
+    });
+    await userEvent.click(screen.getByLabelText('Sunday'));
+    await userEvent.click(screen.getByLabelText('Saturday'));
+    await userEvent.selectOptions(action(1).getByLabelText('Device'), 'light-1');
+    await userEvent.click(screen.getByRole('button', { name: 'Save routine' }));
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      triggerType: 'SCHEDULE',
+      trigger: { cron: '30 22 * * 1,2,3,4,5', timezone: 'America/Los_Angeles' },
+    });
+  });
+
+  it('rejects invalid timezones and an empty weekday selection', async () => {
+    const { create } = setup();
+    await userEvent.type(screen.getByLabelText('Routine name'), 'Invalid schedule');
+    await userEvent.selectOptions(screen.getByLabelText('When to run'), 'SCHEDULE');
+    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '22:00' } });
+    fireEvent.change(screen.getByLabelText('Timezone'), { target: { value: 'No/Zone' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save routine' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('valid timezone');
+    fireEvent.change(screen.getByLabelText('Timezone'), { target: { value: 'UTC' } });
+    for (const day of [
+      'Sunday',
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+    ]) {
+      await userEvent.click(screen.getByLabelText(day));
+    }
+    await userEvent.click(screen.getByRole('button', { name: 'Save routine' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('at least one day');
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('creates typed state conditions and only offers properties of the source device', async () => {
+    const { create } = setup();
+    await userEvent.type(screen.getByLabelText('Routine name'), 'Follow the light');
+    await userEvent.selectOptions(screen.getByLabelText('When to run'), 'DEVICE_STATE');
+    await userEvent.selectOptions(screen.getByLabelText('Trigger device'), 'light-1');
+    expect(
+      within(screen.getByLabelText('Property')).queryByRole('option', { name: 'Volume' }),
+    ).not.toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText('Becomes'), 'true');
+    await userEvent.selectOptions(action(1).getByLabelText('Device'), 'speaker-1');
+    await userEvent.selectOptions(action(1).getByLabelText('Command'), 'play');
+    await userEvent.click(screen.getByRole('button', { name: 'Save routine' }));
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      triggerType: 'DEVICE_STATE',
+      trigger: { deviceId: 'light-1', attribute: 'powerOn', equals: true },
+    });
+  });
+
+  it('validates numeric state conditions and saves numbers without coercing them to strings', async () => {
+    const { create } = setup();
+    await userEvent.type(screen.getByLabelText('Routine name'), 'Quiet mode');
+    await userEvent.selectOptions(screen.getByLabelText('When to run'), 'DEVICE_STATE');
+    await userEvent.selectOptions(screen.getByLabelText('Trigger device'), 'speaker-1');
+    await userEvent.selectOptions(screen.getByLabelText('Property'), 'volume');
+    fireEvent.change(screen.getByLabelText('Becomes'), { target: { value: '101' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save routine' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('whole number from 0 to 100');
+    fireEvent.change(screen.getByLabelText('Becomes'), { target: { value: '0' } });
+    await userEvent.selectOptions(action(1).getByLabelText('Device'), 'light-1');
+    await userEvent.click(screen.getByRole('button', { name: 'Save routine' }));
+    expect(create.mock.calls[0]?.[0].trigger.equals).toBe(0);
+  });
+});

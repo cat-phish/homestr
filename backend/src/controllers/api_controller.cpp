@@ -1,6 +1,7 @@
 #include "homestr/controllers/api_controller.hpp"
 
 #include <chrono>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -63,7 +64,15 @@ void ApiController::expireClients() {
 
 void ApiController::registerRoutes(App& app) {
   app.get_middleware<AuthMiddleware>().auth = &auth_;
-  app.tick(std::chrono::seconds(1), [this] { expireClients(); });
+  hub_.setEventSink([this](const nlohmann::json& event) { broadcast(event.dump()); });
+  app.tick(std::chrono::seconds(1), [this] {
+    expireClients();
+    try {
+      hub_.tickSchedules(Schedule::now());
+    } catch (const std::exception& error) {
+      std::cerr << "[scheduler] " << error.what() << '\n';
+    }
+  });
   // --- Health -------------------------------------------------------------
   CROW_ROUTE(app, "/healthz")
   ([this] {
@@ -163,11 +172,11 @@ void ApiController::registerRoutes(App& app) {
 
   CROW_ROUTE(app, "/api/v1/devices/<string>")
   ([this](const std::string& deviceId) {
-    const SmartDevice* device = hub_.devices().findById(deviceId);
-    if (device == nullptr) {
+    const auto device = hub_.devices().state(deviceId);
+    if (!device) {
       return errorResponse(404, "unknown device " + deviceId);
     }
-    return jsonResponse(200, device->toJson());
+    return jsonResponse(200, *device);
   });
 
   CROW_ROUTE(app, "/api/v1/devices/<string>")
@@ -193,17 +202,14 @@ void ApiController::registerRoutes(App& app) {
             const nlohmann::json params = body->value("params", nlohmann::json::object());
 
             const auto& user = app.get_context<AuthMiddleware>(request).user;
-            const CommandResult result =
-                hub_.devices().sendCommand(deviceId, command, params, user->id);
+            const CommandResult result = hub_.sendCommand(deviceId, command, params, user->id);
             if (!result.ok) {
               const int code = result.error.starts_with("unknown device") ? 404 : 409;
               return errorResponse(code, result.error);
             }
 
-            const SmartDevice* device = hub_.devices().findById(deviceId);
-            const nlohmann::json state =
-                device != nullptr ? device->toJson() : nlohmann::json::object();
-            broadcast(nlohmann::json{{"type", "device_state"}, {"device", state}}.dump());
+            const auto device = hub_.devices().state(deviceId);
+            const nlohmann::json state = device.value_or(nlohmann::json::object());
             return jsonResponse(200, state);
           });
 
@@ -212,7 +218,7 @@ void ApiController::registerRoutes(App& app) {
   ([this] {
     nlohmann::json rules = nlohmann::json::array();
     for (const AutomationRule& rule : hub_.rules()) {
-      rules.push_back(rule.toJson());
+      rules.push_back(hub_.ruleJson(rule));
     }
     return jsonResponse(200, {{"rules", std::move(rules)}});
   });
@@ -222,6 +228,26 @@ void ApiController::registerRoutes(App& app) {
         const std::optional<nlohmann::json> body = parseBody(request);
         if (!body) {
           return errorResponse(400, "malformed JSON body");
+        }
+        if (!body->contains("id") || !body->at("id").is_string() || !body->contains("name") ||
+            !body->at("name").is_string() ||
+            (body->contains("enabled") && !body->at("enabled").is_boolean()) ||
+            (body->contains("triggerType") && !body->at("triggerType").is_string()) ||
+            (body->contains("trigger") && !body->at("trigger").is_object()) ||
+            (body->contains("actions") && !body->at("actions").is_array())) {
+          return errorResponse(400, "invalid rule fields");
+        }
+        const auto type = body->value("triggerType", std::string{"MANUAL"});
+        if (type != "MANUAL" && type != "SCHEDULE" && type != "DEVICE_STATE") {
+          return errorResponse(400, "unsupported trigger type");
+        }
+        for (const auto& action : body->value("actions", nlohmann::json::array())) {
+          if (!action.is_object() || !action.contains("deviceId") ||
+              !action.at("deviceId").is_string() || !action.contains("command") ||
+              !action.at("command").is_string() ||
+              (action.contains("params") && !action.at("params").is_object())) {
+            return errorResponse(400, "invalid rule action");
+          }
         }
         const std::string id = body->value("id", std::string{});
         const std::string name = body->value("name", std::string{});
@@ -241,15 +267,17 @@ void ApiController::registerRoutes(App& app) {
           rule.disable();
         }
 
-        nlohmann::json created = rule.toJson();
-        const auto result = hub_.addRule(std::move(rule));
+        const auto result = hub_.addRule(rule);
+        if (result.status == RuleWriteStatus::InvalidTrigger) {
+          return errorResponse(400, result.error);
+        }
         if (result.status == RuleWriteStatus::Duplicate) {
           return errorResponse(409, "rule " + id + " already exists");
         }
         if (!result) {
           return errorResponse(503, "could not save rule");
         }
-        return jsonResponse(201, created);
+        return jsonResponse(201, hub_.ruleJson(rule));
       });
 
   CROW_ROUTE(app, "/api/v1/rules/<string>/enabled")

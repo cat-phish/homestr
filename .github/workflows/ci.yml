@@ -42,7 +42,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            build-essential cmake ninja-build libasio-dev libmariadb-dev libsodium-dev pkg-config
+            build-essential cmake ninja-build libasio-dev libmariadb-dev libsodium-dev pkg-config tzdata
 
       - name: Cache FetchContent dependencies
         uses: actions/cache@v4

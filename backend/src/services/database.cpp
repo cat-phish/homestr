@@ -47,6 +47,7 @@ User UserRecord::toUser() const {
 
 AutomationRule RuleRecord::toRule() const {
   AutomationRule rule{id, name, parseTriggerType(triggerType), triggerPayload};
+  rule.setLastFiredAt(lastFiredAt);
   for (const auto& action : actions) {
     rule.addAction(action);
   }
@@ -63,7 +64,8 @@ RuleRecord RuleRecord::fromRule(const AutomationRule& rule, const std::string& h
           rule.enabled(),
           std::string{toString(rule.triggerType())},
           rule.triggerPayload(),
-          rule.actions()};
+          rule.actions(),
+          rule.lastFiredAt()};
 }
 
 // ---------------------------------------------------------------------------
@@ -162,11 +164,26 @@ bool InMemoryDatabase::saveRule(const RuleRecord& record) {
   if (match == rules_.end()) {
     rules_.push_back(record);
   } else if (match->householdId == record.householdId) {
+    const auto lastFiredAt = match->lastFiredAt;
     *match = record;
+    match->lastFiredAt = lastFiredAt;
   } else {
     return false;
   }
   return true;
+}
+
+bool InMemoryDatabase::claimScheduledRun(const std::string& householdId, const std::string& ruleId,
+                                         std::int64_t minute) {
+  const std::lock_guard<std::recursive_mutex> lock(mutex_);
+  for (auto& rule : rules_) {
+    if (rule.householdId == householdId && rule.id == ruleId && rule.enabled &&
+        rule.triggerType == "SCHEDULE" && (!rule.lastFiredAt || *rule.lastFiredAt < minute)) {
+      rule.lastFiredAt = minute;
+      return true;
+    }
+  }
+  return false;
 }
 
 bool InMemoryDatabase::deleteRule(const std::string& householdId, const std::string& ruleId) {
@@ -376,6 +393,7 @@ class MariaDbDatabase : public Database {
     try {
       std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
           "SELECT r.id, r.household_id, r.name, r.enabled, r.trigger_type, r.trigger_payload, "
+          "UNIX_TIMESTAMP(r.last_fired_at) AS last_fired_at, "
           "a.id AS action_id, a.device_id, a.command, a.command_params "
           "FROM automation_rules r LEFT JOIN automation_actions a ON a.rule_id = r.id "
           "WHERE r.household_id = ? ORDER BY r.id, a.sequence_no"));
@@ -390,6 +408,9 @@ class MariaDbDatabase : public Database {
           record.householdId = rows->getString("household_id").c_str();
           record.name = rows->getString("name").c_str();
           record.enabled = rows->getBoolean("enabled");
+          if (!rows->isNull("last_fired_at")) {
+            record.lastFiredAt = rows->getInt64("last_fired_at");
+          }
           record.triggerType = rows->getString("trigger_type").c_str();
           record.triggerPayload = nlohmann::json::parse(rows->getString("trigger_payload").c_str());
           records.push_back(std::move(record));
@@ -467,6 +488,25 @@ class MariaDbDatabase : public Database {
       } catch (const sql::SQLException&) {
       }
       std::cerr << "[db] rule write failed\n";
+      return false;
+    }
+  }
+
+  bool claimScheduledRun(const std::string& householdId, const std::string& ruleId,
+                         std::int64_t minute) override {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+      std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
+          "UPDATE automation_rules SET last_fired_at = FROM_UNIXTIME(?) "
+          "WHERE id = ? AND household_id = ? AND enabled = TRUE AND trigger_type = 'SCHEDULE' "
+          "AND (last_fired_at IS NULL OR last_fired_at < FROM_UNIXTIME(?))"));
+      statement->setInt64(1, minute);
+      statement->setString(2, ruleId);
+      statement->setString(3, householdId);
+      statement->setInt64(4, minute);
+      return statement->executeUpdate() == 1;
+    } catch (const sql::SQLException&) {
+      std::cerr << "[db] scheduled run claim failed\n";
       return false;
     }
   }

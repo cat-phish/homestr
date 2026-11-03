@@ -11,7 +11,7 @@ changes must go through first.
 
 ## Current state
 
-As of 2026-11-02, after authentication, rule persistence, and manual routine creation in the WebUI.
+As of 2026-11-02, after authentication, persisted routines, and automatic triggers.
 
 The architecture, schema, build, container stack, tests and CI are in place and
 the stack runs end to end. It is best understood as **a working simulator of
@@ -29,8 +29,8 @@ time. "Turn on the light" currently means "record that the light is on".
 | Persisted sessions, REST/WebSocket authorization, logout, admin device guards | Household scoping and per-device permissions |
 | Commands applied to the model and persisted to the subtype tables | No device I/O at all — no driver, no network |
 | Audit trail in `device_events`, failures included | LAN discovery returns an empty list |
-| Dashboard aggregate and WebSocket push | Cron scheduler never ticks; `evaluate()` is only reached via the manual trigger endpoint |
-| Persisted rules; WebUI manual creation, action ordering, Run and enable/disable | Scheduled/device-state editors and rule editing/deletion endpoints |
+| Dashboard push; scheduled and device-state execution with chain limits | Physical device state monitoring |
+| WebUI manual/scheduled/device-state creation, action ordering, next run, Run and toggles | Rule editing/deletion endpoints |
 | Backend and frontend unit suites; disposable-stack auth smoke test | Single hard-coded household |
 
 Every gap is also tracked under "Open items" in
@@ -94,12 +94,13 @@ has nothing built yet.
 
 ### 7. Automation Engine
 
-- **In Progress** — `AutomationRule` model and execution. `evaluate()` works;
-  no scheduler, no device-state triggers, no recursion guard (Step 4).
+- **Done** — Scheduled execution, timezone/DST policies, persisted run claims,
+  device-state transitions, queued chains, and execution limits (Step 4).
 - **Done** — Rule persistence, startup restoration, and persisted enable/disable (Step 2).
 - **Done** — WebUI manual routine creation with ordered actions, validation, Run,
   and enable/disable controls (Step 7).
-- **To Do** — Scheduled/device-state editors and editing/deleting saved rules.
+- **Done** — Scheduled/device-state creation forms and next-run display.
+- **To Do** — Editing/deleting saved rules.
 
 ### 8. Testing & Quality Assurance
 
@@ -193,20 +194,27 @@ test in CI.
 - [ ] CI job: bring the compose stack up, run `scripts/seed-demo.sh`, restart
       the backend, assert `4 device(s) loaded` in the log.
 
-## Step 4 — Make triggers fire
+## Step 4 — Make triggers fire — Done
 
-`AutomationRule::evaluate` is written and tested but only ever reached from the
-manual trigger endpoint.
+- [x] A server timer checks due schedules every second through `HomeStr`.
+- [x] Pinned croncpp parsing and date-tz IANA conversion, using system tzdata.
+      Five numeric cron fields; explicit per-rule timezone, legacy default UTC.
+- [x] Next-run metadata and WebUI local time/weekday/timezone configuration.
+      Skip missed/nonexistent times; run repeated local minutes only once.
+- [x] Durable at-most-once scheduled-minute claims using existing
+      `automation_rules.last_fired_at`; no schema migration is required.
+- [x] Before/after state events outside device locks; equality conditions fire
+      only on entering a match. No-op/failed commands and hydration do not fire.
+- [x] Serialized, queued descendant events; each rule runs once per chain,
+      capped at 64 rules and 256 actions. RULE actor attribution in audit rows.
+- [x] Automatic state/rule WebSocket updates and locked device-state snapshots.
+- [x] Device/property/typed-value trigger configuration and validation in WebUI/API.
+- [x] Unit, disposable MariaDB, and local browser checks, including actual timer
+      dispatch, restart claims, circular chains, and DST behavior.
 
-- [ ] Schedule triggers: a background thread in `HomeStr` ticking once a
-      minute and matching cron expressions. Use **croncpp** (header-only, via
-      FetchContent, same pattern as the other dependencies) rather than
-      hand-rolling cron parsing.
-- [ ] Device-state triggers: emit a `TriggerEvent` after each successful
-      command so `DEVICE_STATE` rules chain off real changes.
-- [ ] Recursion guard. Rule A turning on a light that triggers rule B that
-      turns it off is an infinite loop, and dispatching from inside
-      `DeviceManager`'s mutex risks deadlock.
+Physical-device change ingestion follows the driver/monitoring work in Step 5.
+Per-action results, retry/replay policies, and browser/integration CI coverage
+remain separate work.
 
 ## Step 5 — Real device I/O
 
@@ -244,7 +252,7 @@ Where the project stops being a simulation. Write the spec before the code.
       ordered actions, validation, pending/error handling, and saved results.
 - [x] Run enabled manual routines and refresh device states; retain enable/disable.
 - [ ] Editing/deleting saved rules.
-- [ ] Scheduled/device-state editors after their trigger engines are implemented.
+- [x] Scheduled/device-state creation forms and next-run display.
 - [ ] A real error surface; errors currently land in a single `role="alert"`
       string.
 - [ ] Optimistic updates with rollback on a failed command.

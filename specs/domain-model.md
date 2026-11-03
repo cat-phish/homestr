@@ -156,35 +156,63 @@ right C++ subclass (`DeviceManager::materialise`).
 3. On success the controller broadcasts a `device_state` WebSocket frame, so
    every open WebUI reflects the change without polling.
 
-### Manual routines in the WebUI
+### Routines in the WebUI
 
-- The dashboard offers a form for creating manual routines with a trimmed name
-  (1–100 characters), a client-generated UUID, and at least one ordered action.
-  New routines are enabled, use `MANUAL`, and have an empty trigger payload.
-- Each action selects a registered device and a command supported by its type.
-  Brightness and volume require an integer from 0–100; color requires `#RRGGBB`;
-  playback may include an optional track. Users can add, remove, and reorder
-  actions before saving. Unavailable selections and invalid values block saving.
-- Save uses the existing rule endpoint and publishes the returned rule only
-  after success. Failed saves retain the draft and show a useful error. Cancel
-  discards the draft. Pending saves disable repeat submissions and draft changes.
-- Without registered devices the dashboard explains why creation is unavailable.
-  Offline devices can be configured, with a note that they may not respond.
-- Enabled manual routines have a Run button, guarded against repeated clicks
-  while pending. Disabled routines cannot run. Other trigger types retain their
-  enable/disable controls but are not offered manual Run buttons.
-- After a manual trigger the initiating dashboard refreshes device state from
-  the hub. The current endpoint confirms a rule was triggered, not that every
-  action succeeded; feedback must not claim all actions completed successfully.
-  Trigger and refresh failures are shown separately. Creation and execution use
-  the existing authenticated API and introduce no transport or schema changes.
-- Editing/deleting saved rules and automatic schedule/device-state execution
-  remain separate backlog work.
+- Create a routine with a trimmed name (1–100 characters), client UUID, and at
+  least one ordered action. Supported triggers are manual, scheduled, and device
+  state. Existing command selection, parameters, action ordering, validation,
+  pending-request protection, and draft retention on save errors apply to all.
+- Scheduled routines select a local time, one or more weekdays, and an IANA
+  timezone (initially the browser timezone). The form emits a five-field cron
+  expression and `timezone`. The dashboard shows the next run in that timezone.
+- Device-state routines select a registered source device, a supported property,
+  and the value it must become. Supported UI properties are power, light
+  brightness/color, speaker connection/volume/playback state. Values retain their
+  JSON types; invalid/missing selections block saving.
+- Manual routines retain Run controls. All types can be enabled/disabled. Save,
+  toggle, and automatic execution refresh rule metadata for connected dashboards.
+- Trigger confirmation does not assert that all actions succeeded. Refresh and
+  command errors retain the existing feedback. Editing/deletion remain future work.
+
+### Automatic trigger execution
+
+- Schedules use five numeric cron fields: minute, hour, day-of-month, month,
+  weekday (Sunday=0 through Saturday=6), with wildcards, lists, ranges and steps.
+  Both day fields must match. Validate with croncpp. Timezone conversion uses the
+  system IANA timezone database through date-tz, without changing process `TZ`.
+  Legacy schedules without `timezone` use UTC.
+- A server timer calls `HomeStr::tickSchedules(now)` every second. It executes
+  only due occurrences in the current minute, never catches up missed runs, and
+  recomputes future occurrences after a clock jump. New/enabled/restored rules
+  are planned strictly after the current instant. Disabled rules do not run.
+- Skip nonexistent spring-forward local times. At fall-back, run only the first
+  occurrence of a repeated local minute. `nextRunAt` is an optional, nullable
+  ISO-8601 UTC timestamp in schedule rule JSON; disabled schedules have null.
+- Before dispatch, atomically claim the scheduled UTC minute in existing
+  `automation_rules.last_fired_at`, conditioned on enabled state and prior claim.
+  Restore this watermark at startup. This is at-most-once dispatch: a crash after
+  claiming may leave actions incomplete; retries and replay are not automatic.
+- A successful command emits before/after state only if a value actually changed,
+  after releasing device/database locks. The hub broadcasts the new state and
+  offers a DEVICE_STATE event to the engine. Failed/no-op commands and startup
+  hydration do not fire state rules. Automation actions also emit changes.
+- Equality conditions fire when the watched value enters the matching state,
+  not on unrelated updates while it already matches. An API condition with no
+  `equals` watches changes to its attribute (or any change if no attribute given).
+  Validate source devices, supported properties, and comparison types on creation.
+- Serialize command/trigger dispatch in the hub. Queue descendant state events
+  instead of recursively executing them. Each rule fires at most once per root
+  event chain, capped at 64 rules and 256 actions; remaining work is dropped with
+  a diagnostic when capped. Independent root changes start fresh chains.
+- Attribute automation commands to actor type RULE and its rule ID. Device
+  commands/automatic updates use locked state snapshots instead of borrowed
+  device pointers. Future hardware drivers must use this same change path;
+  physical-device monitoring is still a separate integration task.
 
 ### Rule persistence
 
 - `RuleRecord` stores the rule ID, household ID, name, enabled state, trigger
-  type/payload, and ordered action list. The public rule JSON stays unchanged.
+  type/payload, and ordered action list. Scheduled rule JSON additionally includes next-run metadata.
 - `Database::listRules(householdId)` returns only that household's complete
   records, ordered by rule ID and action sequence. An empty list is successful;
   a read failure is distinct and prevents hub startup with an incomplete list.
@@ -207,8 +235,8 @@ right C++ subclass (`DeviceManager::materialise`).
    a `TriggerEvent`.
 2. `HomeStr::handleEvent()` offers the event to every rule; each rule's
    `evaluate()` decides for itself (disabled rules decline).
-3. Matching rules' actions are dispatched through `DeviceManager::sendCommand`
-   with an empty actor id, so the audit trail attributes them to the rule.
+3. Matching actions dispatch through the hub and device manager with RULE actor
+   attribution; resulting state events are queued within the same bounded chain.
 
 ---
 
@@ -217,8 +245,6 @@ right C++ subclass (`DeviceManager::materialise`).
 Tracked here so the specs stay ahead of the code:
 
 - Real mDNS/SSDP discovery; `discover()` returns the cache today.
-- Cron evaluation for `SCHEDULE` triggers: the rule matches a tick that the
-  scheduler has already resolved, and the scheduler itself is not implemented.
 - Per-household scoping from the session instead of the single default
   household in `main.cpp`.
 - Per-user device assignment: the RBAC rule says a `User` controls *assigned*
