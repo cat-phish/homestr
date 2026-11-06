@@ -86,6 +86,34 @@ Persistence uses class-table inheritance: `devices` holds the base attributes,
 `devices.id`. `devices.device_type` is the discriminator used to rebuild the
 right C++ subclass (`DeviceManager::materialise`).
 
+### Device drivers
+
+A `DeviceDriver` is the transport to one physical device. `devices.metadata`
+names it: `{"driver": "hue", "lightId": "3"}`. A device with no driver (or one
+that cannot be configured) stays simulated, as every device was before drivers
+existed. `metadata` never holds credentials; those come from the environment.
+
+- **Ordering**: the driver is called before the model changes, so the model
+  only records state the device confirmed. A command the driver rejects
+  (invalid params, unsupported) changes nothing. A transport or device-side
+  failure sets `status = ERROR` and persists it; a later successful send sets
+  `ONLINE`. For a driver-backed device the stored status therefore reflects the
+  last contact, not a value typed at registration.
+- **Audit**: the `device_events` row is written either way, as for simulated
+  devices.
+- **`hue`** (Philips Hue API v1 over plain HTTP; a real bridge or diyHue):
+  - Config: `HUE_BRIDGE_URL`, `HUE_USERNAME` (the bridge whitelist key, a
+    credential — never logged). Applies to `light` devices only.
+  - `PUT /api/<username>/lights/<lightId>/state`, 2 s timeouts.
+  - `turnOn` sends the full model state `{"on":true,"bri","xy"}`; `turnOff`
+    sends `{"on":false}`.
+  - `setBrightness` maps 0-100 onto `bri` 1-254; `setColor` converts `#RRGGBB`
+    to CIE `xy`. With `metadata.color == false` (a dimmable white bulb) `xy`
+    is never sent and `setColor` is rejected. Missing `color` means true. Hue rejects both while a light is off, so while off they are
+    recorded in the model only and delivered by the next `turnOn`.
+  - The bridge reports errors as HTTP 200 with `[{"error":{...}}]`; any error
+    element is a failure.
+
 ### Households
 
 - **Household**:
@@ -132,11 +160,29 @@ right C++ subclass (`DeviceManager::materialise`).
 
 ### Device discovery
 
-1. An admin calls `GET /devices/discover`.
-2. `DeviceManager::discover()` sweeps the LAN (mDNS + SSDP) and returns the
-   candidates that are not yet in `devices`.
-3. Candidates are not persisted: they live only in the discovery cache until
-   registration.
+1. An admin calls `GET /devices/discover` (the WebUI "Add Device" dialog).
+2. `DeviceManager::discover()` asks each configured discovery source for
+   candidates, outside the manager lock, then drops any that are already
+   registered: same `id`, or same `metadata.driver` and `metadata.lightId` (so a
+   light registered by hand under another id is not offered twice).
+3. Candidates are not persisted. Registration posts a candidate back unchanged
+   apart from its name, including its `metadata`, so the registered device gets
+   its driver.
+4. With no source configured, discovery returns an empty list. A source that
+   fails (bridge unreachable, bad username) is logged and contributes nothing.
+
+Sources:
+
+- **Hue bridge** (when `HUE_BRIDGE_URL` and `HUE_USERNAME` are set):
+  `GET /api/<username>/lights`. Each light with a brightness (`state.bri`)
+  becomes a `light` candidate; on/off-only units such as Hue smart plugs are
+  skipped until a driver supports them.
+  - `id`: a deterministic UUID-shaped value from the light's `uniqueid`, so a
+    rescan offers the same id.
+  - `ipAddress`: the bridge host. `status`: `ONLINE` if `state.reachable`,
+    otherwise `OFFLINE`. `attributes.brightness`: `state.bri` scaled to 0-100.
+  - `metadata`: `{"driver":"hue","lightId":"<bridge id>","color":<bool>}`;
+    `color` is true when the light reports `state.xy`.
 
 ### Device registration
 
@@ -146,6 +192,23 @@ right C++ subclass (`DeviceManager::materialise`).
    C++ object.
 3. The device appears in the next dashboard payload and WebSocket snapshot.
 
+### Device renaming and removal
+
+Admin-only, from the device card in the WebUI.
+
+- **Names belong to HomeStr.** A name is copied from discovery once, at
+  registration; renaming in a vendor app (the Hue app) does not change it.
+  `PATCH /devices/{id}` trims the name and requires 1-100 characters. It
+  persists the name (keeping `metadata`, so the driver survives), audits a
+  `rename` event, and pushes a `device_state` frame. A failed write leaves the
+  old name in place (`503`).
+- **Removal** (`DELETE /devices/{id}`) deletes the device; the schema cascades
+  its audit events and every `automation_actions` row that targets it. The hub
+  drops the same actions from its in-memory routines, so a routine keeps running
+  with its remaining actions, and pushes a `snapshot` so every dashboard drops
+  the card. A `DEVICE_STATE` trigger on the removed device stays saved but can
+  never fire. The WebUI asks for confirmation first.
+
 ### Command dispatch
 
 1. A user posts to `POST /devices/{id}/commands`.
@@ -153,6 +216,8 @@ right C++ subclass (`DeviceManager::materialise`).
    the live object, then — outside the lock — persists the new state and appends
    a `device_events` row. The audit row is written whether or not the command
    succeeded.
+   For a driver-backed device the driver is called first (see "Device
+   drivers").
 3. On success the controller broadcasts a `device_state` WebSocket frame, so
    every open WebUI reflects the change without polling.
 
@@ -258,7 +323,21 @@ right C++ subclass (`DeviceManager::materialise`).
 
 Tracked here so the specs stay ahead of the code:
 
-- Real mDNS/SSDP discovery; `discover()` returns the cache today.
+- LAN discovery of bridges and other device families (mDNS/SSDP). Hue lights
+  are discovered from a bridge configured by hand; finding the bridge (SSDP or
+  N-UPnP) and link-button pairing (`POST /api`) from the WebUI are not built.
+- Rooms: HomeStr has no room concept. Hue rooms (bridge groups) are not
+  imported, and the driver controls single lights only.
+- A failed discovery source is only logged; the WebUI cannot tell "nothing
+  found" from "bridge unreachable".
+- Registration does not carry the discovered power state, so a light that is on
+  at registration shows as off until the first command.
+- Driver calls run under the `DeviceManager` lock, so a slow device (up to the
+  2 s timeouts) stalls other commands. Move I/O outside the lock.
+- Driver-backed devices are not polled: a light switched at the wall, or a
+  bridge that goes away between commands, is noticed only on the next command.
+  `last_seen_at` is not written yet.
+- A failed command that sets `ERROR` is not broadcast over the WebSocket.
 - Per-household scoping from the session instead of the single default
   household in `main.cpp`.
 - Per-user device assignment: the RBAC rule says a `User` controls *assigned*

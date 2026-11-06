@@ -53,11 +53,12 @@ TEST_F(AuthMiddlewareTest, LeavesHealthLoginAndPreflightPublic) {
 }
 
 TEST_F(AuthMiddlewareTest, ResolvesTheUserAndEnforcesAdminOperations) {
-  for (const auto method :
-       {crow::HTTPMethod::GET, crow::HTTPMethod::POST, crow::HTTPMethod::DELETE}) {
+  for (const auto method : {crow::HTTPMethod::GET, crow::HTTPMethod::POST, crow::HTTPMethod::DELETE,
+                            crow::HTTPMethod::PATCH}) {
     crow::request request;
-    request.url =
-        method == crow::HTTPMethod::DELETE ? "/api/v1/devices/device-1" : "/api/v1/devices";
+    request.url = method == crow::HTTPMethod::DELETE || method == crow::HTTPMethod::PATCH
+                      ? "/api/v1/devices/device-1"
+                      : "/api/v1/devices";
     request.method = method;
     request.add_header("Authorization", "Bearer " + token_);
     crow::response response;

@@ -11,24 +11,26 @@ changes must go through first.
 
 ## Current state
 
-As of 2026-11-02, after authentication, persisted routines, and automatic triggers.
+As of 2026-11-05, after authentication, persisted routines, automatic triggers,
+and the first device driver (Hue, proven on a physical bridge).
 
 The architecture, schema, build, container stack, tests and CI are in place and
 the stack runs end to end. It is best understood as **a working simulator of
 the architecture, not a partially-working product**.
 
-The gap that matters most, and which the stub list understates:
+The gap that matters most, and which the stub list understates: for every
+device except a Hue light registered with `{"driver":"hue"}` metadata,
 `DeviceManager::sendCommand` mutates an in-memory object and writes it to
-MariaDB, but **no byte ever leaves the host**. There is no driver layer and no
-socket. A device's `ONLINE` status is a value someone typed at registration
-time. "Turn on the light" currently means "record that the light is on".
+MariaDB, but **no byte leaves the host**. Hue lights are real: added from the
+WebUI and controlled through a physical Hue bridge (Step 5). For simulated devices, `ONLINE` is still a value someone typed
+at registration time, and "turn on the light" means "record that the light is on".
 
 | Working | Stubbed |
 | --- | --- |
 | MariaDB schema, seed, first-boot init; Argon2id password verification | Frontend device onboarding and rule editor |
 | Persisted sessions, REST/WebSocket authorization, logout, admin device guards | Household scoping and per-device permissions |
-| Commands applied to the model and persisted to the subtype tables | No device I/O at all — no driver, no network |
-| Audit trail in `device_events`, failures included | LAN discovery returns an empty list |
+| Commands applied to the model and persisted to the subtype tables | Device I/O: Hue lights only |
+| Audit trail in `device_events`, failures included | Discovery: Hue bridge lights only; no LAN scan |
 | Dashboard push; scheduled and device-state execution with chain limits | Physical device state monitoring |
 | WebUI manual/scheduled/device-state creation, action ordering, next run, Run and toggles | Rule editing/deletion endpoints |
 | Backend and frontend unit suites; disposable-stack auth smoke test | Single hard-coded household |
@@ -80,14 +82,27 @@ has nothing built yet.
 
 ### 5. Device Discovery & Commissioning
 
-- **In Progress** — Frontend scan/name/register dialog (`DeviceDiscovery`), shown
-  to admins on the dashboard. Frontend unit tests and typecheck pass.
-  - `discover()` returns three hard-coded fake devices, not real LAN detection.
-  - Not yet verified: C++ build of the `discover()` change, backend tests for it,
-    spec updates, registration surviving a hub restart against MariaDB, and the
-    backend admin guard on `/devices/discover` and `POST /devices`.
-- **To Do** — Real mDNS/SSDP network discovery and compatibility validation (Step 5).
-- **To Do** — Device driver layer and protocol integration (Step 5).
+- **Done** — Admin "Add Device" dialog (`DeviceDiscovery`) backed by Hue bridge
+  discovery: `discover()` lists the configured bridge's dimmable lights with
+  driver metadata, and registration sends it back, so added lights are
+  controllable. The hard-coded fake devices are gone; with no bridge configured
+  the list is empty. Unit-tested (backend and Vitest), lint/format clean; the
+  middleware treats `/devices/discover` and `POST /devices` as admin-only.
+  Verified by hand: a light added from the WebUI against the physical bridge is
+  controllable. Device reload after a restart is covered by the disposable-stack
+  smoke test.
+- **Done** — Admin rename and remove from the device card. Rename is
+  `PATCH /devices/{id}` (HomeStr owns names; vendor-app renames are not
+  synced). Removal cascades routine actions in the store and the live hub and
+  pushes a snapshot. Unit-tested and checked end to end on a disposable MariaDB
+  stack (persistence across restarts, rule trimming).
+- **To Do** — Bridge discovery and pairing from the WebUI; mDNS/SSDP for other
+  device families (Step 5).
+- **To Do** — Rooms. HomeStr has no room concept; Hue rooms (bridge groups) are
+  not imported and the driver controls single lights only.
+- **Done** — Device driver layer and protocol integration (Step 5). The
+  `DeviceDriver` seam and a Hue API v1 driver are built, unit-tested, and
+  verified by hand controlling a physical bulb through a real Hue bridge.
 - **To Do** — Device health and status monitoring (Step 5).
 
 ### 6. Dashboard & Real-Time Control
@@ -226,19 +241,24 @@ remain separate work.
 
 Where the project stops being a simulation. Write the spec before the code.
 
-- [ ] Introduce a `DeviceDriver` interface behind `DeviceManager`, so
-      `turnOn()` delegates to a transport instead of setting a bool. The
-      current split (models own state, manager owns dispatch) makes this clean,
-      but the seam does not exist yet.
-- [ ] Choose one protocol and commit. **Tasmota or Shelly over plain HTTP** is
-      the cheapest useful target — no broker, and works with hardware you can
-      buy for the price of a lunch. MQTT scales better but adds a broker to
-      compose.
+- [x] `DeviceDriver` interface behind `DeviceManager`, selected per device from
+      `devices.metadata`. The driver is called before the model changes; a
+      transport failure sets `ERROR`. Devices without a driver stay simulated.
+- [x] Protocol: **Philips Hue API v1 over plain HTTP** (cpp-httplib client),
+      chosen because the hardware is on hand and diyHue gives a risk-free
+      target with the same API. Lights only; see "Device drivers" in
+      `specs/domain-model.md`.
+- [x] Prove it: a physical bulb on the real bridge, toggled from the WebUI.
+- [ ] Next drivers, easiest first: Gosund WP3 plug (Tuya local protocol needs a
+      key from the Tuya cloud, or a Tasmota flash if the chip allows), then
+      Nest speakers (Cast v2, protobuf over TLS).
 - [ ] Status reality: poll or subscribe, write `last_seen_at`, flip devices to
       `OFFLINE`/`ERROR` on failure. Today a device stays `ONLINE` forever
       because someone said so once.
-- [ ] Then discovery: mDNS (Shelly, Tasmota) and SSDP (Hue), replacing the
-      empty-cache `discover()`.
+- [x] Hue light discovery from the configured bridge, feeding the WebUI
+      "Add Device" dialog with driver metadata.
+- [ ] Bridge discovery (SSDP / N-UPnP) and link-button pairing from the WebUI;
+      mDNS for other device families.
 
 ## Step 6 — Households and RBAC completeness
 
@@ -253,7 +273,8 @@ Where the project stops being a simulation. Write the spec before the code.
 
 - [x] Auth guard validating the stored token and handling expired sessions.
 - [ ] Router for additional screens.
-- [ ] Admin screens: register from discovery results, user management.
+- [x] Admin device screens: register from discovery results, rename, remove.
+- [ ] Admin user management screen.
 - [x] Manual routine creation: names, supported device commands and parameters,
       ordered actions, validation, pending/error handling, and saved results.
 - [x] Run enabled manual routines and refresh device states; retain enable/disable.

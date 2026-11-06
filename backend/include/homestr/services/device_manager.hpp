@@ -5,25 +5,23 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "homestr/models/smart_device.hpp"
+#include "homestr/services/command_result.hpp"
 #include "homestr/services/database.hpp"
+#include "homestr/services/device_driver.hpp"
 
 namespace homestr {
 
-// Result of a command dispatch, mapped straight onto the HTTP response and the
-// `device_events` audit row.
-struct CommandResult {
-  bool ok = false;
-  std::string error;  // empty when ok
+enum class RenameResult { Renamed, UnknownDevice, InvalidName, StorageFailed };
 
-  static CommandResult success() { return {true, {}}; }
-
-  static CommandResult failure(std::string reason) { return {false, std::move(reason)}; }
-};
+// Longest name `devices.name` (VARCHAR(100)) holds.
+constexpr std::size_t MAX_DEVICE_NAME_LENGTH = 100;
 
 // `DeviceManager` from the class diagram: owns the live SmartDevice instances
 // and is the only component that talks to the devices themselves.
@@ -31,11 +29,13 @@ struct CommandResult {
 // engine all call it concurrently.
 class DeviceManager {
  public:
-  explicit DeviceManager(Database& database);
+  // `driverFactory` picks a transport per device from its metadata; devices it
+  // returns nullptr for stay simulated. `discovery` supplies discover().
+  explicit DeviceManager(Database& database, DriverFactory driverFactory = defaultDriverFactory(),
+                         DiscoverySource discovery = defaultDiscoverySource());
 
-  // Probes the local network (mDNS/SSDP) for unregistered devices. The current
-  // implementation returns the discovery cache; the network scan is a separate
-  // work item.
+  // Asks the discovery source for candidates (outside the lock) and drops those
+  // already registered, by id or by driver + lightId.
   std::vector<DeviceRecord> discover();
 
   // Registers a discovered device into a household and persists it. Fails if
@@ -43,6 +43,11 @@ class DeviceManager {
   bool registerDevice(const DeviceRecord& record);
 
   bool unregisterDevice(const std::string& deviceId);
+
+  // Trims `name`, persists it with the rest of the device (metadata included)
+  // and audits a `rename` event. A failed write restores the old name.
+  RenameResult renameDevice(const std::string& deviceId, std::string_view name,
+                            const std::string& actorId);
 
   // Borrowed pointer, nullptr when unknown. Valid until the device is
   // unregistered.
@@ -52,7 +57,10 @@ class DeviceManager {
   std::size_t loadHousehold(const std::string& householdId);
 
   // Dispatches a domain command ("turnOn", "setBrightness", "play", ...) and
-  // persists the resulting state plus an audit event.
+  // persists the resulting state plus an audit event. A driver-backed device
+  // is sent the command first and the model changes only if the device
+  // accepted it; a transport failure marks the device ERROR.
+  // Known limitation: the driver call runs under the manager lock.
   CommandResult sendCommand(const std::string& deviceId, const std::string& command,
                             const nlohmann::json& params, const std::string& actorId,
                             const std::string& actorType = "USER");
@@ -77,10 +85,20 @@ class DeviceManager {
   // Projects live state back into a persistable record. Caller holds mutex_.
   DeviceRecord project(const SmartDevice& device) const;
 
+  // Stores the record's metadata and its driver, if any. Caller holds mutex_.
+  void bind(const DeviceRecord& record);
+
+  struct Binding {
+    nlohmann::json metadata = nlohmann::json::object();
+    std::unique_ptr<DeviceDriver> driver;  // null: simulated
+  };
+
   Database& database_;
+  DriverFactory driverFactory_;
+  DiscoverySource discovery_;
+  std::unordered_map<std::string, Binding> bindings_;
   mutable std::mutex mutex_;
   std::vector<std::unique_ptr<SmartDevice>> devices_;
-  std::vector<DeviceRecord> discovered_;
   std::string householdId_;
   StateObserver observer_;
 };
