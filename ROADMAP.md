@@ -55,8 +55,8 @@ has nothing built yet.
 
 - **Done** — Multi-container Docker Compose environment and networking.
 - **Done** — C++ (CMake) and TypeScript (Vite/lint) build pipelines.
-- **Review** — GitHub Actions CI and spec documentation. Specs are written;
-  `ci.yml` has never been confirmed green on Actions (Step 0).
+- **Done** — GitHub Actions CI and spec documentation. All five `ci.yml` jobs
+  pass on Actions (Step 0).
 - **To Do** — Database integration test in CI (Step 3).
 
 ### 2. Database & Persistence
@@ -144,18 +144,19 @@ has nothing built yet.
 
 ---
 
-## Step 0 — Get CI green and merge
+## Step 0 — Get CI green — Done
 
-Two unknowns were never exercised, because the equivalent commands were only
-run locally and never under GitHub Actions:
+- [x] `backend` builds with `-Werror` under Ubuntu 24.04's GCC 13.
+- [x] `format` installs `clang-format-16` from Ubuntu 24.04's repositories.
+- [x] `schema` had failed on every run since CI was added: the runner image has
+      no `mariadb` client, so `init.sql` was never applied. It now runs the
+      client inside the MariaDB service container, applies `init.sql` twice to
+      enforce idempotency, and fails unless the tables in `homestr_db` exactly
+      match the `CREATE TABLE` statements in `init.sql`.
 
-- The `backend` job builds with `-Werror` on Ubuntu 24.04's GCC 13; the local
-  verification used the container's GCC 12, so a newer compiler may surface new
-  warnings.
-- The `format` job installs `clang-format-16`; if that package name is not in
-  Ubuntu 24.04's repos the job fails on the install step, not on formatting.
-
-Fix what those surface and merge, so everyone branches from a known-good main.
+The `backend` job builds without MariaDB Connector/C++, so CI compiles the SQL
+in `database.cpp` only inside the Docker image and never runs it against a
+database. Step 3 closes that gap.
 
 ## Step 1 — Authentication — Done
 
