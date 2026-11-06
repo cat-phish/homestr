@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '@/api/client';
-import type { Device, DeviceRegistration, DeviceType } from '@/types';
+import type { Device, DeviceRegistration } from '@/types';
 
 interface DiscoveredDevice extends Omit<DeviceRegistration, 'householdId'> {
   name: string;
@@ -14,7 +14,12 @@ interface Props {
   onClose: () => void;
 }
 
-export function DeviceDiscovery({ householdId, registeredDeviceIds, onDeviceRegistered, onClose }: Props) {
+export function DeviceDiscovery({
+  householdId,
+  registeredDeviceIds,
+  onDeviceRegistered,
+  onClose,
+}: Props) {
   const [discovered, setDiscovered] = useState<DiscoveredDevice[]>([]);
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -55,7 +60,7 @@ export function DeviceDiscovery({ householdId, registeredDeviceIds, onDeviceRegi
         householdId,
         name: name.trim(),
         ipAddress: device.ipAddress,
-        type: device.type as DeviceType,
+        type: device.type,
         status: device.status || 'ONLINE',
         attributes: device.attributes || {},
       };
@@ -79,7 +84,7 @@ export function DeviceDiscovery({ householdId, registeredDeviceIds, onDeviceRegi
 
   useEffect(() => {
     setLoading(true);
-    handleScan().finally(() => setLoading(false));
+    void handleScan().finally(() => setLoading(false));
   }, []);
 
   return (

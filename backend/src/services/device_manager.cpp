@@ -92,46 +92,37 @@ std::vector<DeviceRecord> DeviceManager::discover() {
   // Mock discovered devices for testing/demo purposes.
   // TODO(backend): replace with real mDNS + SSDP sweep of the LAN.
   const std::vector<DeviceRecord> mockDevices = {
-    {
-      .id = "mock-light-001",
-      .householdId = "",
-      .name = "Living Room Light",
-      .ipAddress = "192.168.1.100",
-      .deviceType = "light",
-      .status = "ONLINE",
-      .powerOn = false,
-      .attributes = {{"brightness", 100}, {"color", "#FFFFFF"}}
-    },
-    {
-      .id = "mock-speaker-001",
-      .householdId = "",
-      .name = "Kitchen Speaker",
-      .ipAddress = "192.168.1.101",
-      .deviceType = "speaker",
-      .status = "ONLINE",
-      .powerOn = false,
-      .attributes = {{"connected", false}, {"volume", 50}, {"playbackState", "STOPPED"}}
-    },
-    {
-      .id = "mock-generic-001",
-      .householdId = "",
-      .name = "Front Door Lock",
-      .ipAddress = "192.168.1.102",
-      .deviceType = "generic",
-      .status = "ONLINE",
-      .powerOn = false,
-      .attributes = {}
-    }
-  };
+      {.id = "mock-light-001",
+       .householdId = "",
+       .name = "Living Room Light",
+       .ipAddress = "192.168.1.100",
+       .deviceType = "light",
+       .status = "ONLINE",
+       .powerOn = false,
+       .attributes = {{"brightness", 100}, {"color", "#FFFFFF"}}},
+      {.id = "mock-speaker-001",
+       .householdId = "",
+       .name = "Kitchen Speaker",
+       .ipAddress = "192.168.1.101",
+       .deviceType = "speaker",
+       .status = "ONLINE",
+       .powerOn = false,
+       .attributes = {{"connected", false}, {"volume", 50}, {"playbackState", "STOPPED"}}},
+      {.id = "mock-generic-001",
+       .householdId = "",
+       .name = "Front Door Lock",
+       .ipAddress = "192.168.1.102",
+       .deviceType = "generic",
+       .status = "ONLINE",
+       .powerOn = false,
+       .attributes = {}}};
 
   // Filter out devices already registered.
   for (const auto& candidate : mockDevices) {
-    const bool registered = std::any_of(
-      devices_.begin(), devices_.end(),
-      [&candidate](const std::unique_ptr<SmartDevice>& device) {
-        return device->id() == candidate.id;
-      }
-    );
+    const bool registered = std::any_of(devices_.begin(), devices_.end(),
+                                        [&candidate](const std::unique_ptr<SmartDevice>& device) {
+                                          return device->id() == candidate.id;
+                                        });
     if (!registered) {
       candidates.push_back(candidate);
     }
