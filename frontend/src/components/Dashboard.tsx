@@ -3,17 +3,24 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '@/api/client';
 import { subscribe } from '@/api/websocket';
 import { DeviceCard } from '@/components/DeviceCard';
+import { DeviceDiscovery } from '@/components/DeviceDiscovery';
 import { RuleForm } from '@/components/RuleForm';
 import { nextRunLabel, stateTriggerLabel } from '@/utils/triggers';
-import type { AutomationRule, Device, ServerEvent } from '@/types';
+import type { AutomationRule, Device, ServerEvent, User } from '@/types';
 
-export function Dashboard() {
+interface Props {
+  user: User;
+}
+
+export function Dashboard({ user }: Props) {
   const [devices, setDevices] = useState<Device[]>([]);
   const [rules, setRules] = useState<AutomationRule[]>([]);
+  const [householdId, setHouseholdId] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
   const [message, setMessage] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [discoveringDevices, setDiscoveringDevices] = useState(false);
   const [loading, setLoading] = useState(true);
   const [stale, setStale] = useState(false);
   const [pendingRule, setPendingRule] = useState<string | null>(null);
@@ -30,6 +37,7 @@ export function Dashboard() {
       .getDashboard()
       .then((dashboard) => {
         if (!cancelled) {
+          setHouseholdId(dashboard.householdId);
           setDevices(dashboard.devices);
           setRules(dashboard.rules);
           setLoading(false);
@@ -54,6 +62,7 @@ export function Dashboard() {
         if (event.type === 'snapshot') {
           setLoading(false);
           setStale(false);
+          setHouseholdId(event.payload.householdId);
           setDevices(event.payload.devices);
           setRules(event.payload.rules);
         } else if (event.type === 'device_state') {
@@ -148,6 +157,11 @@ export function Dashboard() {
     );
   };
 
+  const handleDeviceRegistered = (device: Device): void => {
+    setDevices((current) => [...current, device]);
+    setMessage(`Device "${device.name}" registered successfully.`);
+  };
+
   return (
     <main className="dashboard">
       <h2>Devices</h2>
@@ -159,14 +173,34 @@ export function Dashboard() {
           Reconnecting to the hub… Device states may be outdated.
         </p>
       )}
-      {devices.length === 0 ? (
-        <p>No devices registered yet.</p>
-      ) : (
-        <section className="dashboard__devices">
-          {devices.map((device) => (
-            <DeviceCard key={device.id} device={device} stale={stale} onCommand={handleCommand} />
-          ))}
-        </section>
+      <div className="dashboard__devices-header">
+        {devices.length === 0 ? (
+          <p>No devices registered yet.</p>
+        ) : (
+          <section className="dashboard__devices">
+            {devices.map((device) => (
+              <DeviceCard key={device.id} device={device} stale={stale} onCommand={handleCommand} />
+            ))}
+          </section>
+        )}
+        <button
+          type="button"
+          className="dashboard__add-device-btn"
+          onClick={() => setDiscoveringDevices(true)}
+          disabled={loading || user.role !== 'admin'}
+          hidden={user.role !== 'admin'}
+        >
+          + Add Device
+        </button>
+      </div>
+
+      {discoveringDevices && householdId && (
+        <DeviceDiscovery
+          householdId={householdId}
+          registeredDeviceIds={new Set(devices.map((d) => d.id))}
+          onDeviceRegistered={handleDeviceRegistered}
+          onClose={() => setDiscoveringDevices(false)}
+        />
       )}
 
       <section aria-labelledby="routines-title" className="dashboard__routines">

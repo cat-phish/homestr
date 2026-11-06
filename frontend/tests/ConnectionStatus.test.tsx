@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { api, clearToken, getToken, setToken } from '@/api/client';
 import { Dashboard } from '@/components/Dashboard';
-import type { Dashboard as DashboardPayload, Light } from '@/types';
+import type { Dashboard as DashboardPayload, Light, User } from '@/types';
 
 // Unlike Dashboard.test.tsx, the real reconnecting WebSocket client is used here,
 // driven through a fake socket, so the two are verified working together.
@@ -32,6 +32,13 @@ const kitchen: Light = {
   powerOn: true,
   brightness: 80,
   color: '#ffffff',
+};
+
+const mockAdmin: User = {
+  id: 'user-1',
+  name: 'Admin',
+  email: 'admin@example.com',
+  role: 'admin',
 };
 
 const dashboardWith = (device: Light): DashboardPayload => ({
@@ -73,7 +80,7 @@ const waitForReconnectAttempt = async (ms: number): Promise<void> => {
 const indicator = (): HTMLElement | null => screen.queryByText(/Reconnecting to the hub/);
 
 const renderConnectedDashboard = async (): Promise<void> => {
-  render(<Dashboard />);
+  render(<Dashboard user={mockAdmin} />);
   await act(async () => {
     await vi.advanceTimersByTimeAsync(0);
   });
@@ -142,7 +149,7 @@ describe('Feature: Dashboard connection status', () => {
     });
 
     it('also flags a hub that is unreachable on the very first connection', async () => {
-      render(<Dashboard />);
+      render(<Dashboard user={mockAdmin} />);
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
       });

@@ -99,7 +99,7 @@ export function App() {
         </button>
       </header>
       {error !== null && <p role="alert">{error}</p>}
-      <Dashboard />
+      <Dashboard user={user} />
     </>
   );
 }

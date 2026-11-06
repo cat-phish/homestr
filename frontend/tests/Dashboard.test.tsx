@@ -5,9 +5,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, ApiError } from '@/api/client';
 import { subscribe } from '@/api/websocket';
 import { Dashboard } from '@/components/Dashboard';
-import type { Dashboard as DashboardPayload } from '@/types';
+import type { Dashboard as DashboardPayload, User } from '@/types';
 
 vi.mock('@/api/websocket', () => ({ subscribe: vi.fn() }));
+
+const mockAdmin: User = {
+  id: 'user-1',
+  name: 'Admin',
+  email: 'admin@example.com',
+  role: 'admin',
+};
 
 const initial: DashboardPayload = {
   householdId: 'home',
@@ -54,7 +61,7 @@ describe('dashboard routines', () => {
     vi.spyOn(api, 'createRule').mockImplementation((rule) =>
       Promise.resolve({ ...rule, enabled: true }),
     );
-    render(<Dashboard />);
+    render(<Dashboard user={mockAdmin} />);
     await screen.findByText('Bedtime');
     await userEvent.click(screen.getByRole('button', { name: 'New routine' }));
     await userEvent.type(screen.getByLabelText('Routine name'), 'Leaving home');
@@ -73,7 +80,7 @@ describe('dashboard routines', () => {
         ...initial,
         devices: initial.devices.map((device) => ({ ...device, powerOn: false })),
       });
-    render(<Dashboard />);
+    render(<Dashboard user={mockAdmin} />);
     await userEvent.click(await screen.findByRole('button', { name: 'Run Bedtime' }));
     expect(api.triggerRule).toHaveBeenCalledWith('r1');
     expect(await screen.findByRole('button', { name: 'Turn on' })).toBeInTheDocument();
@@ -88,7 +95,7 @@ describe('dashboard routines', () => {
       resolve = done;
     });
     vi.spyOn(api, 'triggerRule').mockReturnValue(response);
-    render(<Dashboard />);
+    render(<Dashboard user={mockAdmin} />);
     await userEvent.click(await screen.findByRole('button', { name: 'Run Bedtime' }));
     expect(screen.getByRole('button', { name: 'Run Bedtime' })).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: 'Run Bedtime' }));
@@ -102,7 +109,7 @@ describe('dashboard routines', () => {
 
   it('shows a trigger error without claiming that a routine ran', async () => {
     vi.spyOn(api, 'triggerRule').mockRejectedValue(new ApiError(404, 'rule is disabled'));
-    render(<Dashboard />);
+    render(<Dashboard user={mockAdmin} />);
     await userEvent.click(await screen.findByRole('button', { name: 'Run Bedtime' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('rule is disabled');
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
@@ -113,7 +120,7 @@ describe('dashboard routines', () => {
     vi.mocked(api.getDashboard)
       .mockResolvedValueOnce(initial)
       .mockRejectedValue(new Error('offline'));
-    render(<Dashboard />);
+    render(<Dashboard user={mockAdmin} />);
     await userEvent.click(await screen.findByRole('button', { name: 'Run Bedtime' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Routine triggered, but device states could not be refreshed',
@@ -122,7 +129,7 @@ describe('dashboard routines', () => {
 
   it('explains why a routine cannot be created without devices', async () => {
     vi.mocked(api.getDashboard).mockResolvedValue({ ...initial, devices: [], rules: [] });
-    render(<Dashboard />);
+    render(<Dashboard user={mockAdmin} />);
     expect(await screen.findByText('Add a device before creating a routine.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'New routine' })).toBeDisabled();
     expect(within(screen.getByRole('main')).getByText('No routines yet.')).toBeInTheDocument();
@@ -143,14 +150,14 @@ describe('connection status', () => {
   });
 
   it('shows no indicator or outdated marks while connected', async () => {
-    render(<Dashboard />);
+    render(<Dashboard user={mockAdmin} />);
     await screen.findByRole('article', { name: 'Kitchen' });
     expect(screen.queryByText(/Reconnecting/)).not.toBeInTheDocument();
     expect(screen.getByRole('article', { name: 'Kitchen' })).not.toHaveAttribute('data-stale');
   });
 
   it('shows a reconnecting indicator and marks device states as outdated', async () => {
-    render(<Dashboard />);
+    render(<Dashboard user={mockAdmin} />);
     await screen.findByRole('article', { name: 'Kitchen' });
     act(() => loseConnection());
     expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
@@ -160,7 +167,7 @@ describe('connection status', () => {
   });
 
   it('refreshes to the current state and clears the indicator on the next snapshot', async () => {
-    render(<Dashboard />);
+    render(<Dashboard user={mockAdmin} />);
     await screen.findByRole('button', { name: 'Turn off' });
     act(() => loseConnection());
     act(() =>
@@ -178,7 +185,7 @@ describe('connection status', () => {
   });
 
   it('stays outdated until a snapshot arrives', async () => {
-    render(<Dashboard />);
+    render(<Dashboard user={mockAdmin} />);
     await screen.findByRole('article', { name: 'Kitchen' });
     act(() => loseConnection());
     act(() => emit({ type: 'device_state', device: { ...initial.devices[0]!, powerOn: false } }));
@@ -198,7 +205,7 @@ describe('automatic routine summaries', () => {
         },
       ],
     });
-    render(<Dashboard />);
+    render(<Dashboard user={mockAdmin} />);
     expect(await screen.findByText(/Next run:/)).toHaveTextContent('America/Los_Angeles');
     expect(screen.queryByRole('button', { name: 'Run Scheduled' })).not.toBeInTheDocument();
   });

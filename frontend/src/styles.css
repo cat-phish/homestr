@@ -236,3 +236,104 @@ button:disabled {
   align-items: center;
   gap: 0.25rem;
 }
+
+.dashboard__devices-header {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.dashboard__add-device-btn {
+  align-self: flex-start;
+}
+
+.device-discovery {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 1.5rem;
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+  max-width: 28rem;
+  width: 90vw;
+  max-height: 80vh;
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+.device-discovery::backdrop {
+  background: color-mix(in srgb, currentColor 30%, transparent);
+}
+
+.device-discovery__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.device-discovery__header h2 {
+  margin: 0;
+}
+
+.device-discovery__header button {
+  padding: 0;
+  min-width: 2rem;
+  height: 2rem;
+  font-size: 1.5rem;
+}
+
+.device-discovery__list {
+  padding: 0;
+  list-style: none;
+  margin: 1rem 0;
+}
+
+.device-discovery__item {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.75rem;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.device-discovery__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.device-discovery__info input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 0.25rem;
+}
+
+.device-discovery__label {
+  display: block;
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+
+.device-discovery__info small {
+  display: block;
+  font-size: 0.85rem;
+  opacity: 0.75;
+  overflow-wrap: break-word;
+}
+
+.device-discovery__empty {
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+.device-discovery__footer {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}
+

@@ -80,10 +80,13 @@ has nothing built yet.
 
 ### 5. Device Discovery & Commissioning
 
-- **To Do** — Network discovery and compatibility validation (Step 5).
-- **In Progress** — Admin device registration, household association and
-  decommissioning. Backend register/unregister and admin guards work; no UI,
-  household hard-coded (Steps 6, 7).
+- **In Progress** — Frontend scan/name/register dialog (`DeviceDiscovery`), shown
+  to admins on the dashboard. Frontend unit tests and typecheck pass.
+  - `discover()` returns three hard-coded fake devices, not real LAN detection.
+  - Not yet verified: C++ build of the `discover()` change, backend tests for it,
+    spec updates, registration surviving a hub restart against MariaDB, and the
+    backend admin guard on `/devices/discover` and `POST /devices`.
+- **To Do** — Real mDNS/SSDP network discovery and compatibility validation (Step 5).
 - **To Do** — Device driver layer and protocol integration (Step 5).
 - **To Do** — Device health and status monitoring (Step 5).
 
