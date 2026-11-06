@@ -91,6 +91,9 @@ has nothing built yet.
 
 - **Done** — REST/WebSocket endpoints for device state and commands.
 - **Done** — Dashboard grid and device control cards.
+- **Done** — Connection status: a reconnecting indicator and "may be outdated"
+  marks on device cards after the live connection drops; the hub's reconnect
+  snapshot refreshes the dashboard and clears them (Step 7).
 
 ### 7. Automation Engine
 
@@ -110,8 +113,8 @@ has nothing built yet.
   against a disposable MariaDB stack. Integration coverage still needs to run
   in CI (Step 3).
 - **In Progress** — Vitest covers device cards, API requests, frontend session
-  handling, WebSocket authentication, manual routine forms, and dashboard Run
-  behavior. A local Chromium check verifies creation, ordering, execution,
+  handling, WebSocket authentication and loss reporting, connection-status
+  display, manual routine forms, and dashboard Run behavior. A local Chromium check verifies creation, ordering, execution,
   restart/reload persistence, and mobile layout against a disposable stack.
   Automated browser coverage in CI remains open.
 
@@ -253,6 +256,8 @@ Where the project stops being a simulation. Write the spec before the code.
 - [x] Run enabled manual routines and refresh device states; retain enable/disable.
 - [ ] Editing/deleting saved rules.
 - [x] Scheduled/device-state creation forms and next-run display.
+- [x] Dashboard connection status: reconnecting indicator, outdated device marks,
+      refresh from the hub's snapshot on reconnect.
 - [ ] A real error surface; errors currently land in a single `role="alert"`
       string.
 - [ ] Optimistic updates with rollback on a failed command.

@@ -454,7 +454,9 @@ paths:
       description: |
         `GET /api/v1/ws` with `Upgrade: websocket`. The server pushes:
 
-          * `{"type":"snapshot","payload":<Dashboard>}` once on connect
+          * `{"type":"snapshot","payload":<Dashboard>}` once on every connect,
+            including each reconnect. Clients rely on it to resynchronize after
+            missing `device_state` frames while disconnected.
           * `{"type":"device_state","device":<Device>}` on every state change
           * `{"type":"pong"}` in reply to the client's `ping` keep-alive
 

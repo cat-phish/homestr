@@ -77,4 +77,14 @@ describe('DeviceCard', () => {
     expect(screen.getByRole('button', { name: 'Turn on' })).toBeDisabled();
     expect(screen.getByLabelText('Brightness')).toBeDisabled();
   });
+
+  it('marks its state as potentially outdated only when stale', () => {
+    const { rerender } = render(<DeviceCard device={light} onCommand={vi.fn()} />);
+    expect(screen.queryByText('May be outdated')).not.toBeInTheDocument();
+    expect(screen.getByRole('article')).not.toHaveAttribute('data-stale');
+
+    rerender(<DeviceCard device={light} stale onCommand={vi.fn()} />);
+    expect(screen.getByText('May be outdated')).toBeInTheDocument();
+    expect(screen.getByRole('article')).toHaveAttribute('data-stale', 'true');
+  });
 });

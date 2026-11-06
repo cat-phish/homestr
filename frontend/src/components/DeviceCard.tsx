@@ -2,19 +2,27 @@ import { type Device, isLight, isSpeaker } from '@/types';
 
 interface DeviceCardProps {
   device: Device;
+  /** True while the live connection is down, so the shown state may be out of date. */
+  stale?: boolean;
   /** Dispatches a command; the parent owns the optimistic/refresh behaviour. */
   onCommand: (deviceId: string, command: string, params?: Record<string, unknown>) => void;
 }
 
-export function DeviceCard({ device, onCommand }: DeviceCardProps) {
+export function DeviceCard({ device, stale = false, onCommand }: DeviceCardProps) {
   const offline = device.status !== 'ONLINE';
 
   return (
-    <article className="device-card" aria-label={device.name} data-status={device.status}>
+    <article
+      className="device-card"
+      aria-label={device.name}
+      data-status={device.status}
+      data-stale={stale ? 'true' : undefined}
+    >
       <header>
         <h3>{device.name}</h3>
         <span className="device-card__status">{device.status}</span>
       </header>
+      {stale && <small className="device-card__stale">May be outdated</small>}
 
       <dl>
         <dt>Address</dt>

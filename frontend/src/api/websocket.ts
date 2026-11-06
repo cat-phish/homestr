@@ -16,13 +16,21 @@ const defaultUrl = (): string => {
   return `${scheme}//${window.location.host}${DEFAULT_PATH}`;
 };
 
+export interface SubscribeOptions {
+  url?: string;
+  /** Called each time the live connection is lost and a retry will follow. */
+  onReconnecting?: () => void;
+}
+
 /**
  * Auto-reconnecting subscription to the hub's push channel. Returns an
- * unsubscribe function that closes the socket and stops reconnecting.
+ * unsubscribe function that closes the socket and stops reconnecting. The hub
+ * sends a `snapshot` frame on every connect, which callers use to resynchronize
+ * after an `onReconnecting` notification.
  */
 export function subscribe(
   onEvent: (event: ServerEvent) => void,
-  url: string = defaultUrl(),
+  { url = defaultUrl(), onReconnecting }: SubscribeOptions = {},
 ): () => void {
   let socket: WebSocket | null = null;
   let pingTimer: ReturnType<typeof setInterval> | undefined;
@@ -59,6 +67,7 @@ export function subscribe(
       if (closedByCaller) {
         return;
       }
+      onReconnecting?.();
       // Browsers hide HTTP handshake errors. Check the session over REST so a
       // rejected upgrade can return the user to sign-in instead of retrying forever.
       const scheduleRetry = (): void => {

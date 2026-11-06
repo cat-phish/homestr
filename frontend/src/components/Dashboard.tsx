@@ -15,6 +15,7 @@ export function Dashboard() {
   const [message, setMessage] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [stale, setStale] = useState(false);
   const [pendingRule, setPendingRule] = useState<string | null>(null);
   const ruleBusy = useRef(false);
 
@@ -42,19 +43,31 @@ export function Dashboard() {
       });
 
     // Live updates: the hub pushes a frame whenever any device changes state,
-    // including changes made by automation rules or another client.
-    const unsubscribe = subscribe((event: ServerEvent) => {
-      if (cancelled) {
-        return;
-      }
-      if (event.type === 'snapshot') {
-        setLoading(false);
-        setDevices(event.payload.devices);
-        setRules(event.payload.rules);
-      } else if (event.type === 'device_state') {
-        replaceDevice(event.device);
-      }
-    });
+    // including changes made by automation rules or another client. A lost
+    // connection leaves the shown state unverified until the hub's next snapshot,
+    // which it sends on every (re)connect.
+    const unsubscribe = subscribe(
+      (event: ServerEvent) => {
+        if (cancelled) {
+          return;
+        }
+        if (event.type === 'snapshot') {
+          setLoading(false);
+          setStale(false);
+          setDevices(event.payload.devices);
+          setRules(event.payload.rules);
+        } else if (event.type === 'device_state') {
+          replaceDevice(event.device);
+        }
+      },
+      {
+        onReconnecting: () => {
+          if (!cancelled) {
+            setStale(true);
+          }
+        },
+      },
+    );
 
     return () => {
       cancelled = true;
@@ -141,12 +154,17 @@ export function Dashboard() {
       {error !== null && <p role="alert">{error}</p>}
       {message !== null && <p role="status">{message}</p>}
       {loading && <p role="status">Loading dashboard…</p>}
+      {stale && (
+        <p role="status" className="dashboard__connection">
+          Reconnecting to the hub… Device states may be outdated.
+        </p>
+      )}
       {devices.length === 0 ? (
         <p>No devices registered yet.</p>
       ) : (
         <section className="dashboard__devices">
           {devices.map((device) => (
-            <DeviceCard key={device.id} device={device} onCommand={handleCommand} />
+            <DeviceCard key={device.id} device={device} stale={stale} onCommand={handleCommand} />
           ))}
         </section>
       )}

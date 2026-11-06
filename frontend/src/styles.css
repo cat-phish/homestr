@@ -53,6 +53,20 @@ body {
   opacity: 0.6;
 }
 
+.device-card[data-stale='true'] {
+  border-style: dashed;
+}
+
+.device-card__stale {
+  font-style: italic;
+}
+
+.dashboard__connection {
+  padding: 0.5rem 0.75rem;
+  border: 1px dashed currentColor;
+  border-radius: 0.5rem;
+}
+
 .device-card header {
   display: flex;
   justify-content: space-between;

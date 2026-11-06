@@ -174,6 +174,20 @@ right C++ subclass (`DeviceManager::materialise`).
 - Trigger confirmation does not assert that all actions succeeded. Refresh and
   command errors retain the existing feedback. Editing/deletion remain future work.
 
+### Dashboard connection status
+
+- The WebSocket client reconnects with backoff and reports each loss of the live
+  connection to its caller. Closing on purpose (unmount) and session rejection
+  (code 4001, REST 401) are not reported; those follow the sign-in flow.
+- While the first connection is being established the dashboard shows the REST
+  payload as current. After a loss, the dashboard shows a `role="status"`
+  reconnecting indicator and marks every device card as potentially outdated
+  (`data-stale`, visible "May be outdated" text). Controls stay available.
+- Recovery is the `snapshot` frame the hub sends on every connect. It replaces the
+  displayed devices and routines, so changes made while disconnected appear, and it
+  clears the indicator and the outdated marks. An open socket without a snapshot
+  does not count as recovered.
+
 ### Automatic trigger execution
 
 - Schedules use five numeric cron fields: minute, hour, day-of-month, month,

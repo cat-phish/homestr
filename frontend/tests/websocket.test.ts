@@ -39,7 +39,7 @@ afterEach(() => {
 describe('authenticated WebSocket', () => {
   it('offers credentials as a subprotocol without putting them in the URL', () => {
     setToken('session-token');
-    unsubscribe = subscribe(vi.fn(), 'ws://localhost/api/v1/ws');
+    unsubscribe = subscribe(vi.fn(), { url: 'ws://localhost/api/v1/ws' });
     expect(FakeSocket.instances[0]?.url).toBe('ws://localhost/api/v1/ws');
     expect(FakeSocket.instances[0]?.protocols).toEqual(['homestr', 'bearer.session-token']);
   });
@@ -82,5 +82,53 @@ describe('authenticated WebSocket', () => {
     resolve({ id: 'u1', name: 'Ada', email: 'ada@example.com', role: 'user' });
     await vi.advanceTimersByTimeAsync(1000);
     expect(FakeSocket.instances).toHaveLength(1);
+  });
+});
+
+describe('connection loss reporting', () => {
+  it('reports each lost connection and reconnects', async () => {
+    setToken('session-token');
+    vi.spyOn(api, 'me').mockResolvedValue({
+      id: 'u1',
+      name: 'Ada',
+      email: 'ada@example.com',
+      role: 'user',
+    });
+    const onReconnecting = vi.fn();
+    unsubscribe = subscribe(vi.fn(), { onReconnecting });
+    FakeSocket.instances[0]?.onopen?.();
+    expect(onReconnecting).not.toHaveBeenCalled();
+
+    FakeSocket.instances[0]?.onclose?.({ code: 1006 } as CloseEvent);
+    expect(onReconnecting).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(FakeSocket.instances).toHaveLength(2);
+
+    FakeSocket.instances[1]?.onclose?.({ code: 1006 } as CloseEvent);
+    expect(onReconnecting).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a failed first connection', () => {
+    setToken('session-token');
+    const onReconnecting = vi.fn();
+    unsubscribe = subscribe(vi.fn(), { onReconnecting });
+    FakeSocket.instances[0]?.onclose?.({ code: 1006 } as CloseEvent);
+    expect(onReconnecting).toHaveBeenCalledOnce();
+  });
+
+  it('does not report a rejected session or a deliberate close', () => {
+    setToken('session-token');
+    const onReconnecting = vi.fn();
+    unsubscribe = subscribe(vi.fn(), { onReconnecting });
+    FakeSocket.instances[0]?.onclose?.({ code: 4001 } as CloseEvent);
+    expect(onReconnecting).not.toHaveBeenCalled();
+
+    setToken('session-token');
+    unsubscribe();
+    unsubscribe = subscribe(vi.fn(), { onReconnecting });
+    const socket = FakeSocket.instances[1];
+    unsubscribe();
+    socket?.onclose?.({ code: 1000 } as CloseEvent);
+    expect(onReconnecting).not.toHaveBeenCalled();
   });
 });

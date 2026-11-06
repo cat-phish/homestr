@@ -129,6 +129,63 @@ describe('dashboard routines', () => {
   });
 });
 
+describe('connection status', () => {
+  type Handler = Parameters<typeof subscribe>[0];
+  let emit!: Handler;
+  let loseConnection!: () => void;
+
+  beforeEach(() => {
+    vi.mocked(subscribe).mockImplementation((onEvent, options) => {
+      emit = onEvent;
+      loseConnection = () => options?.onReconnecting?.();
+      return vi.fn();
+    });
+  });
+
+  it('shows no indicator or outdated marks while connected', async () => {
+    render(<Dashboard />);
+    await screen.findByRole('article', { name: 'Kitchen' });
+    expect(screen.queryByText(/Reconnecting/)).not.toBeInTheDocument();
+    expect(screen.getByRole('article', { name: 'Kitchen' })).not.toHaveAttribute('data-stale');
+  });
+
+  it('shows a reconnecting indicator and marks device states as outdated', async () => {
+    render(<Dashboard />);
+    await screen.findByRole('article', { name: 'Kitchen' });
+    act(() => loseConnection());
+    expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+    const card = screen.getByRole('article', { name: 'Kitchen' });
+    expect(card).toHaveAttribute('data-stale', 'true');
+    expect(within(card).getByText('May be outdated')).toBeInTheDocument();
+  });
+
+  it('refreshes to the current state and clears the indicator on the next snapshot', async () => {
+    render(<Dashboard />);
+    await screen.findByRole('button', { name: 'Turn off' });
+    act(() => loseConnection());
+    act(() =>
+      emit({
+        type: 'snapshot',
+        payload: {
+          ...initial,
+          devices: initial.devices.map((device) => ({ ...device, powerOn: false })),
+        },
+      }),
+    );
+    expect(screen.getByRole('button', { name: 'Turn on' })).toBeInTheDocument();
+    expect(screen.queryByText(/Reconnecting/)).not.toBeInTheDocument();
+    expect(screen.getByRole('article', { name: 'Kitchen' })).not.toHaveAttribute('data-stale');
+  });
+
+  it('stays outdated until a snapshot arrives', async () => {
+    render(<Dashboard />);
+    await screen.findByRole('article', { name: 'Kitchen' });
+    act(() => loseConnection());
+    act(() => emit({ type: 'device_state', device: { ...initial.devices[0]!, powerOn: false } }));
+    expect(screen.getByText(/Reconnecting/)).toBeInTheDocument();
+  });
+});
+
 describe('automatic routine summaries', () => {
   it('shows the next scheduled run in the configured timezone', async () => {
     vi.mocked(api.getDashboard).mockResolvedValue({

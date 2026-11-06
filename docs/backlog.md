@@ -151,7 +151,14 @@ integration. Aligns with roadmap Steps 5 and 7.
 
 ### 6. Show connection loss and refresh after recovery
 
-**Size: M · Importance: High**
+**Size: M · Importance: High · Status: Complete**
+
+**Delivered:** The WebSocket client reports each lost connection. The dashboard
+shows a reconnecting indicator and marks every device card "May be outdated"
+until the hub's `snapshot` frame (sent on every connect) refreshes devices and
+routines and clears both. Deliberate closes and session rejection (4001/401) are
+not reported and keep following the sign-in flow. Verified with Vitest only; no
+browser or disposable-stack check has run against a real hub restart.
 
 **What:** Tell the user when live dashboard information may be outdated, and
 restore current state when the connection returns.
@@ -267,8 +274,7 @@ Aligns with roadmap Step 4.
 
 Secure access, rule persistence, and manual routine creation are complete. The
 database integration checks run locally; add them to CI next. Connection
-visibility is another useful task. Scheduled and device-state triggers are now
-available. Continue with one physical-device integration and onboarding for that
+visibility is complete, and scheduled and device-state triggers are available. Continue with one physical-device integration and onboarding for that
 device family.
 
 Complete household isolation and assignments before expanding to multiple
