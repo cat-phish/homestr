@@ -237,6 +237,11 @@ bool InMemoryDatabase::deleteDevice(const std::string& deviceId) {
     return false;
   }
   devices_.erase(removed, devices_.end());
+  // Mirror the schema's ON DELETE CASCADE on automation_actions.device_id.
+  for (RuleRecord& rule : rules_) {
+    std::erase_if(rule.actions,
+                  [&deviceId](const RuleAction& action) { return action.deviceId == deviceId; });
+  }
   return true;
 }
 

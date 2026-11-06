@@ -5,6 +5,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -16,6 +17,11 @@
 #include "homestr/services/device_driver.hpp"
 
 namespace homestr {
+
+enum class RenameResult { Renamed, UnknownDevice, InvalidName, StorageFailed };
+
+// Longest name `devices.name` (VARCHAR(100)) holds.
+constexpr std::size_t MAX_DEVICE_NAME_LENGTH = 100;
 
 // `DeviceManager` from the class diagram: owns the live SmartDevice instances
 // and is the only component that talks to the devices themselves.
@@ -37,6 +43,11 @@ class DeviceManager {
   bool registerDevice(const DeviceRecord& record);
 
   bool unregisterDevice(const std::string& deviceId);
+
+  // Trims `name`, persists it with the rest of the device (metadata included)
+  // and audits a `rename` event. A failed write restores the old name.
+  RenameResult renameDevice(const std::string& deviceId, std::string_view name,
+                            const std::string& actorId);
 
   // Borrowed pointer, nullptr when unknown. Valid until the device is
   // unregistered.

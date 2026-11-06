@@ -115,6 +115,13 @@ export const api = {
       body: JSON.stringify(device),
     }),
 
+  /** PATCH /devices/{id} -- admin only; returns the renamed device. */
+  renameDevice: (deviceId: string, name: string): Promise<Device> =>
+    request<Device>(`/devices/${encodeURIComponent(deviceId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+
   unregisterDevice: (deviceId: string): Promise<void> =>
     request<void>(`/devices/${encodeURIComponent(deviceId)}`, { method: 'DELETE' }),
 

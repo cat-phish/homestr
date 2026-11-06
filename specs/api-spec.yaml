@@ -231,10 +231,56 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+    patch:
+      tags: [Devices]
+      summary: Rename a device
+      description: |
+        Admin operation. HomeStr owns device names: a name changed in a vendor
+        app (e.g. the Hue app) is not picked up. Persists the name, audits a
+        `rename` event and pushes a `device_state` frame.
+      operationId: renameDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                  description: Leading and trailing whitespace is trimmed first.
+      responses:
+        '200':
+          description: The renamed device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: The name could not be persisted; the device keeps its old name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
     delete:
       tags: [Devices]
       summary: Unregister a device
-      description: Admin operation (`Admin::removeDevice`).
+      description: |
+        Admin operation (`Admin::removeDevice`). Deletes the device, its audit
+        events and every routine action that targets it (the routines themselves
+        remain), then pushes a `snapshot` frame so open dashboards drop it.
       operationId: unregisterDevice
       responses:
         '204':
@@ -459,7 +505,8 @@ paths:
 
           * `{"type":"snapshot","payload":<Dashboard>}` once on every connect,
             including each reconnect. Clients rely on it to resynchronize after
-            missing `device_state` frames while disconnected.
+            missing `device_state` frames while disconnected. Also sent after a
+            device is removed.
           * `{"type":"device_state","device":<Device>}` on every state change
           * `{"type":"pong"}` in reply to the client's `ping` keep-alive
 

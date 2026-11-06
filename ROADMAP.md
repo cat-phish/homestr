@@ -91,8 +91,15 @@ has nothing built yet.
   Verified by hand: a light added from the WebUI against the physical bridge is
   controllable. Device reload after a restart is covered by the disposable-stack
   smoke test.
+- **Done** — Admin rename and remove from the device card. Rename is
+  `PATCH /devices/{id}` (HomeStr owns names; vendor-app renames are not
+  synced). Removal cascades routine actions in the store and the live hub and
+  pushes a snapshot. Unit-tested and checked end to end on a disposable MariaDB
+  stack (persistence across restarts, rule trimming).
 - **To Do** — Bridge discovery and pairing from the WebUI; mDNS/SSDP for other
   device families (Step 5).
+- **To Do** — Rooms. HomeStr has no room concept; Hue rooms (bridge groups) are
+  not imported and the driver controls single lights only.
 - **Done** — Device driver layer and protocol integration (Step 5). The
   `DeviceDriver` seam and a Hue API v1 driver are built, unit-tested, and
   verified by hand controlling a physical bulb through a real Hue bridge.
@@ -266,7 +273,8 @@ Where the project stops being a simulation. Write the spec before the code.
 
 - [x] Auth guard validating the stored token and handling expired sessions.
 - [ ] Router for additional screens.
-- [ ] Admin screens: register from discovery results, user management.
+- [x] Admin device screens: register from discovery results, rename, remove.
+- [ ] Admin user management screen.
 - [x] Manual routine creation: names, supported device commands and parameters,
       ordered actions, validation, pending/error handling, and saved results.
 - [x] Run enabled manual routines and refresh device states; retain enable/disable.

@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -118,6 +119,49 @@ TEST_F(HomeStrTest, dashboardReportsHouseholdDevicesAndRules) {
   EXPECT_EQ(payload.at("devices").size(), 1U);
   ASSERT_TRUE(payload.at("rules").is_array());
   EXPECT_EQ(payload.at("rules").at(0).at("id"), "rule-1");
+}
+
+TEST_F(HomeStrTest, RenamePushesTheNewDeviceState) {
+  std::vector<nlohmann::json> events;
+  hub_->setEventSink([&events](const nlohmann::json& event) { events.push_back(event); });
+  ASSERT_TRUE(hub_->devices().registerDevice(makeLightRecord()));
+
+  ASSERT_EQ(hub_->renameDevice("light-1", "Sofa lamp", "admin-1"), RenameResult::Renamed);
+
+  ASSERT_EQ(events.size(), 1U);
+  EXPECT_EQ(events.at(0).at("type"), "device_state");
+  EXPECT_EQ(events.at(0).at("device").at("name"), "Sofa lamp");
+}
+
+TEST_F(HomeStrTest, RemoveDropsTheDevicesRuleActionsAndPushesASnapshot) {
+  DeviceRecord other = makeLightRecord();
+  other.id = "light-2";
+  ASSERT_TRUE(hub_->devices().registerDevice(makeLightRecord()));
+  ASSERT_TRUE(hub_->devices().registerDevice(other));
+  AutomationRule rule = makeRule();  // turnOff light-1
+  rule.addAction(RuleAction{"light-2", "turnOff", {}});
+  ASSERT_TRUE(hub_->addRule(rule));
+  std::vector<nlohmann::json> events;
+  hub_->setEventSink([&events](const nlohmann::json& event) { events.push_back(event); });
+
+  ASSERT_TRUE(hub_->removeDevice("light-1"));
+
+  EXPECT_EQ(hub_->devices().size(), 1U);
+  ASSERT_EQ(hub_->rules().size(), 1U);
+  ASSERT_EQ(hub_->rules().front().actions().size(), 1U);
+  EXPECT_EQ(hub_->rules().front().actions().front().deviceId, "light-2");
+  // The store cascades too, so a restart sees the same rule.
+  const auto stored = database_->listRules(HOUSEHOLD);
+  ASSERT_TRUE(stored.has_value());
+  ASSERT_EQ(stored->size(), 1U);
+  EXPECT_EQ(stored->front().actions.size(), 1U);
+  ASSERT_EQ(events.size(), 1U);
+  EXPECT_EQ(events.at(0).at("type"), "snapshot");
+  EXPECT_EQ(events.at(0).at("payload").at("devices").size(), 1U);
+}
+
+TEST_F(HomeStrTest, RemoveReportsAnUnknownDevice) {
+  EXPECT_FALSE(hub_->removeDevice("ghost"));
 }
 
 }  // namespace

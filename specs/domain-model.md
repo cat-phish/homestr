@@ -192,6 +192,23 @@ Sources:
    C++ object.
 3. The device appears in the next dashboard payload and WebSocket snapshot.
 
+### Device renaming and removal
+
+Admin-only, from the device card in the WebUI.
+
+- **Names belong to HomeStr.** A name is copied from discovery once, at
+  registration; renaming in a vendor app (the Hue app) does not change it.
+  `PATCH /devices/{id}` trims the name and requires 1-100 characters. It
+  persists the name (keeping `metadata`, so the driver survives), audits a
+  `rename` event, and pushes a `device_state` frame. A failed write leaves the
+  old name in place (`503`).
+- **Removal** (`DELETE /devices/{id}`) deletes the device; the schema cascades
+  its audit events and every `automation_actions` row that targets it. The hub
+  drops the same actions from its in-memory routines, so a routine keeps running
+  with its remaining actions, and pushes a `snapshot` so every dashboard drops
+  the card. A `DEVICE_STATE` trigger on the removed device stays saved but can
+  never fire. The WebUI asks for confirmation first.
+
 ### Command dispatch
 
 1. A user posts to `POST /devices/{id}/commands`.
@@ -309,6 +326,8 @@ Tracked here so the specs stay ahead of the code:
 - LAN discovery of bridges and other device families (mDNS/SSDP). Hue lights
   are discovered from a bridge configured by hand; finding the bridge (SSDP or
   N-UPnP) and link-button pairing (`POST /api`) from the WebUI are not built.
+- Rooms: HomeStr has no room concept. Hue rooms (bridge groups) are not
+  imported, and the driver controls single lights only.
 - A failed discovery source is only logged; the WebUI cannot tell "nothing
   found" from "bridge unreachable".
 - Registration does not carry the discovered power state, so a light that is on

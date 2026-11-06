@@ -94,6 +94,30 @@ export function Dashboard({ user }: Props) {
     [replaceDevice],
   );
 
+  const handleRename = useCallback(
+    (deviceId: string, name: string): void => {
+      api
+        .renameDevice(deviceId, name)
+        .then(replaceDevice)
+        .catch((cause: unknown) =>
+          setError(cause instanceof ApiError ? cause.message : 'Could not rename the device'),
+        );
+    },
+    [replaceDevice],
+  );
+
+  const handleRemove = useCallback((deviceId: string): void => {
+    api
+      .unregisterDevice(deviceId)
+      .then(() => setDevices((current) => current.filter((device) => device.id !== deviceId)))
+      .catch((cause: unknown) =>
+        setError(cause instanceof ApiError ? cause.message : 'Could not remove the device'),
+      );
+  }, []);
+
+  const adminActions =
+    user.role === 'admin' ? { onRename: handleRename, onRemove: handleRemove } : {};
+
   const handleToggleRule = async (rule: AutomationRule): Promise<void> => {
     if (ruleBusy.current) {
       return;
@@ -179,7 +203,13 @@ export function Dashboard({ user }: Props) {
         ) : (
           <section className="dashboard__devices">
             {devices.map((device) => (
-              <DeviceCard key={device.id} device={device} stale={stale} onCommand={handleCommand} />
+              <DeviceCard
+                key={device.id}
+                device={device}
+                stale={stale}
+                onCommand={handleCommand}
+                {...adminActions}
+              />
             ))}
           </section>
         )}

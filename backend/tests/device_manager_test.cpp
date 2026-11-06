@@ -333,5 +333,57 @@ TEST(DiscoveryTest, NoSourceMeansNoCandidates) {
   EXPECT_TRUE(manager.discover().empty());
 }
 
+TEST_F(DeviceManagerTest, RenamePersistsTrimmedNameAndAudits) {
+  DeviceRecord record = makeLightRecord();
+  record.metadata = {{"driver", "none"}, {"lightId", "7"}};
+  ASSERT_TRUE(manager_.registerDevice(record));
+
+  EXPECT_EQ(manager_.renameDevice("light-1", "  Sofa lamp \n", "admin-1"), RenameResult::Renamed);
+
+  EXPECT_EQ(manager_.state("light-1")->at("name"), "Sofa lamp");
+  const auto stored = database_.findDevice("light-1");
+  ASSERT_TRUE(stored.has_value());
+  EXPECT_EQ(stored->name, "Sofa lamp");
+  EXPECT_EQ(stored->metadata.value("lightId", std::string{}), "7");
+  EXPECT_EQ(stored->attributes.at("brightness"), 80);
+  EXPECT_EQ(database_.event_count(), 1U);
+}
+
+TEST_F(DeviceManagerTest, RenameRejectsBlankOrOverlongNames) {
+  ASSERT_TRUE(manager_.registerDevice(makeLightRecord()));
+
+  EXPECT_EQ(manager_.renameDevice("light-1", "", "admin-1"), RenameResult::InvalidName);
+  EXPECT_EQ(manager_.renameDevice("light-1", " \t ", "admin-1"), RenameResult::InvalidName);
+  EXPECT_EQ(manager_.renameDevice("light-1", std::string(101, 'x'), "admin-1"),
+            RenameResult::InvalidName);
+  EXPECT_EQ(manager_.renameDevice("light-1", std::string(100, 'x'), "admin-1"),
+            RenameResult::Renamed);
+}
+
+TEST_F(DeviceManagerTest, RenameReportsUnknownDevice) {
+  EXPECT_EQ(manager_.renameDevice("ghost", "Name", "admin-1"), RenameResult::UnknownDevice);
+}
+
+TEST(RenameStorageTest, FailedWriteKeepsTheOldName) {
+  class FailingSaves : public InMemoryDatabase {
+   public:
+    bool failSaves = false;
+
+    bool saveDevice(const DeviceRecord& record) override {
+      return !failSaves && InMemoryDatabase::saveDevice(record);
+    }
+  } database;
+
+  database.connect();
+  DeviceManager manager{database, nullptr, nullptr};
+  ASSERT_TRUE(manager.registerDevice(makeLightRecord()));
+  database.failSaves = true;
+
+  EXPECT_EQ(manager.renameDevice("light-1", "New name", "admin-1"), RenameResult::StorageFailed);
+
+  EXPECT_EQ(manager.state("light-1")->at("name"), "Kitchen Ceiling");
+  EXPECT_EQ(database.event_count(), 1U);  // the failed attempt is still audited
+}
+
 }  // namespace
 }  // namespace homestr

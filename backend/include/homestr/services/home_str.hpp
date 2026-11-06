@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -53,6 +54,14 @@ class HomeStr {
   // Evaluates every rule against `event` and dispatches the actions of those
   // that match. Returns the ids of the rules that fired.
   std::vector<std::string> handleEvent(const TriggerEvent& event);
+
+  // Renames through DeviceManager and pushes a `device_state` frame.
+  RenameResult renameDevice(const std::string& deviceId, std::string_view name,
+                            const std::string& actorId);
+
+  // Unregisters the device, drops routine actions that target it (as the
+  // schema cascade does), and pushes a snapshot. False for an unknown device.
+  bool removeDevice(const std::string& deviceId);
 
   CommandResult sendCommand(const std::string& deviceId, const std::string& command,
                             const nlohmann::json& params, const std::string& actorId);

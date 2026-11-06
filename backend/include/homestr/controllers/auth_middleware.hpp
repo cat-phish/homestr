@@ -53,7 +53,8 @@ struct AuthMiddleware {
                ((request.url == "/api/v1/devices" && request.method == crow::HTTPMethod::POST) ||
                 request.url == "/api/v1/devices/discover" ||
                 (request.url.starts_with("/api/v1/devices/") &&
-                 request.method == crow::HTTPMethod::DELETE))) {
+                 (request.method == crow::HTTPMethod::DELETE ||
+                  request.method == crow::HTTPMethod::PATCH)))) {
       code = 403;
     }
     if (code != 0) {

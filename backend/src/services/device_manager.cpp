@@ -168,6 +168,48 @@ bool DeviceManager::unregisterDevice(const std::string& deviceId) {
   return database_.deleteDevice(deviceId);
 }
 
+RenameResult DeviceManager::renameDevice(const std::string& deviceId, std::string_view name,
+                                         const std::string& actorId) {
+  const auto first = name.find_first_not_of(" \t\r\n");
+  const std::string trimmed =
+      first == std::string_view::npos
+          ? std::string{}
+          : std::string{name.substr(first, name.find_last_not_of(" \t\r\n") - first + 1)};
+  if (trimmed.empty() || trimmed.size() > MAX_DEVICE_NAME_LENGTH) {
+    return RenameResult::InvalidName;
+  }
+
+  std::string previous;
+  DeviceRecord record;
+  {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    const auto match = std::find_if(devices_.begin(), devices_.end(),
+                                    [&deviceId](const std::unique_ptr<SmartDevice>& device) {
+                                      return device->id() == deviceId;
+                                    });
+    if (match == devices_.end()) {
+      return RenameResult::UnknownDevice;
+    }
+    previous = (*match)->name();
+    (*match)->setName(trimmed);
+    record = project(**match);
+  }
+
+  const bool saved = database_.saveDevice(record);
+  database_.recordEvent(deviceId, actorId.empty() ? "SYSTEM" : "USER", actorId, "rename",
+                        {{"name", trimmed}}, saved);
+  if (!saved) {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& device : devices_) {
+      if (device->id() == deviceId) {
+        device->setName(previous);
+      }
+    }
+    return RenameResult::StorageFailed;
+  }
+  return RenameResult::Renamed;
+}
+
 SmartDevice* DeviceManager::findById(const std::string& deviceId) {
   const std::lock_guard<std::mutex> lock(mutex_);
   const auto match = std::find_if(
