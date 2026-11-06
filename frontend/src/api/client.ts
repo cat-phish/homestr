@@ -3,6 +3,7 @@ import type {
   Dashboard,
   Device,
   DeviceRegistration,
+  DiscoveredDevice,
   LoginResponse,
   User,
 } from '@/types';
@@ -103,8 +104,8 @@ export const api = {
     request<Device>(`/devices/${encodeURIComponent(deviceId)}`),
 
   /** GET /devices/discover -- unregistered devices seen on the LAN. */
-  async discover(): Promise<DeviceRegistration[]> {
-    const { discovered } = await request<{ discovered: DeviceRegistration[] }>('/devices/discover');
+  async discover(): Promise<DiscoveredDevice[]> {
+    const { discovered } = await request<{ discovered: DiscoveredDevice[] }>('/devices/discover');
     return discovered;
   },
 

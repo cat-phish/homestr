@@ -1,11 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '@/api/client';
-import type { Device, DeviceRegistration } from '@/types';
-
-interface DiscoveredDevice extends Omit<DeviceRegistration, 'householdId'> {
-  name: string;
-  ipAddress: string;
-}
+import type { Device, DeviceRegistration, DiscoveredDevice } from '@/types';
 
 interface Props {
   householdId: string;
@@ -63,6 +58,8 @@ export function DeviceDiscovery({
         type: device.type,
         status: device.status || 'ONLINE',
         attributes: device.attributes || {},
+        // Driver configuration (e.g. which Hue light) goes back unchanged.
+        ...(device.metadata !== undefined && { metadata: device.metadata }),
       };
 
       const result = await api.registerDevice(registration);

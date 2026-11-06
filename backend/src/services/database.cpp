@@ -577,7 +577,7 @@ class MariaDbDatabase : public Database {
       statement->setString(5, record.deviceType);
       statement->setString(6, record.status);
       statement->setBoolean(7, record.powerOn);
-      statement->setString(8, record.attributes.dump());
+      statement->setString(8, record.metadata.is_object() ? record.metadata.dump() : "{}");
       statement->executeUpdate();
       return saveSubtype(record);
     } catch (const sql::SQLException& error) {
@@ -628,7 +628,7 @@ class MariaDbDatabase : public Database {
   // reads the ones matching device_type.
   static constexpr const char* DEVICE_SELECT =
       "SELECT d.id, d.household_id, d.name, d.ip_address, d.device_type, "
-      "d.status, d.power_on, "
+      "d.status, d.power_on, d.metadata, "
       "l.brightness, l.color, s.connected, s.volume, s.playback_state, "
       "s.current_track "
       "FROM devices d "
@@ -644,6 +644,13 @@ class MariaDbDatabase : public Database {
     record.deviceType = rows.getString("device_type").c_str();
     record.status = rows.getString("status").c_str();
     record.powerOn = rows.getBoolean("power_on");
+    if (!rows.isNull("metadata")) {
+      nlohmann::json metadata =
+          nlohmann::json::parse(rows.getString("metadata").c_str(), nullptr, false);
+      if (metadata.is_object()) {
+        record.metadata = std::move(metadata);
+      }
+    }
 
     if (record.deviceType == "light" && !rows.isNull("brightness")) {
       record.attributes["brightness"] = rows.getInt("brightness");

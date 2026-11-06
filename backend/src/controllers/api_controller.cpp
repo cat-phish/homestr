@@ -139,7 +139,10 @@ void ApiController::registerRoutes(App& app) {
       discovered.push_back({{"id", record.id},
                             {"name", record.name},
                             {"ipAddress", record.ipAddress},
-                            {"type", record.deviceType}});
+                            {"type", record.deviceType},
+                            {"status", record.status},
+                            {"attributes", record.attributes},
+                            {"metadata", record.metadata}});
     }
     return jsonResponse(200, {{"discovered", std::move(discovered)}});
   });
@@ -160,6 +163,10 @@ void ApiController::registerRoutes(App& app) {
         record.deviceType = body->value("type", std::string{"generic"});
         record.status = body->value("status", std::string{"OFFLINE"});
         record.attributes = body->value("attributes", nlohmann::json::object());
+        record.metadata = body->value("metadata", nlohmann::json::object());
+        if (!record.metadata.is_object()) {
+          return errorResponse(400, "metadata must be an object");
+        }
 
         if (record.id.empty() || record.name.empty() || record.ipAddress.empty()) {
           return errorResponse(400, "id, name and ipAddress are required");

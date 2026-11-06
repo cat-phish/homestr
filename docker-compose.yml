@@ -66,6 +66,9 @@ services:
       HOMESTR_LOG_LEVEL: ${HOMESTR_LOG_LEVEL:-debug}
       HOMESTR_BUILD_TYPE: ${HOMESTR_BUILD_TYPE:-Debug}
       HOMESTR_RUN_TESTS: ${HOMESTR_RUN_TESTS:-0}
+      # Hue driver; unset leaves Hue-tagged lights simulated. See .env.example.
+      HUE_BRIDGE_URL: ${HUE_BRIDGE_URL:-}
+      HUE_USERNAME: ${HUE_USERNAME:-}
     ports:
       - '${HOMESTR_PUBLISHED_PORT:-8080}:8080'
     volumes:

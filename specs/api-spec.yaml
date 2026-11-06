@@ -188,7 +188,10 @@ paths:
     get:
       tags: [Devices]
       summary: Devices seen on the LAN but not yet registered
-      description: Administrator operation. Triggers an mDNS/SSDP sweep and returns the candidates.
+      description: |
+        Administrator operation. Queries each configured discovery source (today
+        the Hue bridge) and returns the candidates not yet registered. Empty when
+        no source is configured or reachable.
       operationId: discoverDevices
       responses:
         '200':
@@ -634,10 +637,11 @@ components:
 
     DiscoveredDevice:
       type: object
-      required: [id, name, ipAddress, type]
+      required: [id, name, ipAddress, type, status, attributes, metadata]
       properties:
         id:
           type: string
+          format: uuid
         name:
           type: string
         ipAddress:
@@ -645,6 +649,15 @@ components:
         type:
           type: string
           enum: [light, speaker, generic]
+        status:
+          $ref: '#/components/schemas/DeviceStatus'
+        attributes:
+          type: object
+          additionalProperties: true
+        metadata:
+          type: object
+          description: Driver configuration to send back unchanged in `DeviceRegistration`.
+          additionalProperties: true
 
     DeviceRegistration:
       type: object
@@ -669,6 +682,12 @@ components:
         attributes:
           type: object
           description: Subtype attributes, e.g. `{"brightness":100,"color":"#FFFFFF"}`
+          additionalProperties: true
+        metadata:
+          type: object
+          description: |
+            Driver configuration, e.g. `{"driver":"hue","lightId":"3"}`. Omit for a
+            simulated device. Never carries credentials.
           additionalProperties: true
 
     Command:

@@ -42,6 +42,9 @@ struct DeviceRecord {
   std::string status = "OFFLINE";
   bool powerOn = false;
   nlohmann::json attributes = nlohmann::json::object();
+  // `devices.metadata`: vendor/driver configuration, e.g.
+  // {"driver":"hue","lightId":"3"}. Never holds credentials.
+  nlohmann::json metadata = nlohmann::json::object();
 };
 
 struct UserRecord {

@@ -15,7 +15,20 @@
 
 namespace homestr {
 
-DeviceManager::DeviceManager(Database& database) : database_(database) {}
+DeviceManager::DeviceManager(Database& database, DriverFactory driverFactory,
+                             DiscoverySource discovery)
+    : database_(database),
+      driverFactory_(std::move(driverFactory)),
+      discovery_(std::move(discovery)) {}
+
+void DeviceManager::bind(const DeviceRecord& record) {
+  Binding binding;
+  binding.metadata = record.metadata.is_object() ? record.metadata : nlohmann::json::object();
+  if (driverFactory_) {
+    binding.driver = driverFactory_(record);
+  }
+  bindings_[record.id] = std::move(binding);
+}
 
 std::unique_ptr<SmartDevice> DeviceManager::materialise(const DeviceRecord& record) {
   std::unique_ptr<SmartDevice> device;
@@ -54,6 +67,10 @@ DeviceRecord DeviceManager::project(const SmartDevice& device) const {
   record.deviceType = std::string{device.type()};
   record.status = std::string{toString(device.status())};
   record.powerOn = device.isOn();
+  // Carry the driver configuration through: saveDevice is an upsert.
+  if (const auto binding = bindings_.find(device.id()); binding != bindings_.end()) {
+    record.metadata = binding->second.metadata;
+  }
 
   // Keep the subtype attributes out of toJson()'s transport keys: the record
   // mirrors the subtype tables.
@@ -76,59 +93,38 @@ std::size_t DeviceManager::loadHousehold(const std::string& householdId) {
   const std::lock_guard<std::mutex> lock(mutex_);
   householdId_ = householdId;
   devices_.clear();
+  bindings_.clear();
   devices_.reserve(records.size());
   for (const DeviceRecord& record : records) {
     devices_.push_back(materialise(record));
+    bind(record);
   }
   return devices_.size();
 }
 
 std::vector<DeviceRecord> DeviceManager::discover() {
+  // The source may hit the network; keep that outside the lock.
+  std::vector<DeviceRecord> found = discovery_ ? discovery_() : std::vector<DeviceRecord>{};
+
   const std::lock_guard<std::mutex> lock(mutex_);
-
-  // Build a list of discovered devices, excluding any already registered.
-  std::vector<DeviceRecord> candidates;
-
-  // Mock discovered devices for testing/demo purposes.
-  // TODO(backend): replace with real mDNS + SSDP sweep of the LAN.
-  const std::vector<DeviceRecord> mockDevices = {
-      {.id = "mock-light-001",
-       .householdId = "",
-       .name = "Living Room Light",
-       .ipAddress = "192.168.1.100",
-       .deviceType = "light",
-       .status = "ONLINE",
-       .powerOn = false,
-       .attributes = {{"brightness", 100}, {"color", "#FFFFFF"}}},
-      {.id = "mock-speaker-001",
-       .householdId = "",
-       .name = "Kitchen Speaker",
-       .ipAddress = "192.168.1.101",
-       .deviceType = "speaker",
-       .status = "ONLINE",
-       .powerOn = false,
-       .attributes = {{"connected", false}, {"volume", 50}, {"playbackState", "STOPPED"}}},
-      {.id = "mock-generic-001",
-       .householdId = "",
-       .name = "Front Door Lock",
-       .ipAddress = "192.168.1.102",
-       .deviceType = "generic",
-       .status = "ONLINE",
-       .powerOn = false,
-       .attributes = {}}};
-
-  // Filter out devices already registered.
-  for (const auto& candidate : mockDevices) {
-    const bool registered = std::any_of(devices_.begin(), devices_.end(),
-                                        [&candidate](const std::unique_ptr<SmartDevice>& device) {
-                                          return device->id() == candidate.id;
-                                        });
-    if (!registered) {
-      candidates.push_back(candidate);
+  const auto registered = [this](const DeviceRecord& candidate) {
+    if (bindings_.count(candidate.id) != 0) {
+      return true;
     }
-  }
-
-  return candidates;
+    // A light added by hand under another id still counts as registered.
+    const std::string driver = candidate.metadata.value("driver", std::string{});
+    const std::string lightId = candidate.metadata.value("lightId", std::string{});
+    if (driver.empty() || lightId.empty()) {
+      return false;
+    }
+    return std::any_of(bindings_.begin(), bindings_.end(), [&](const auto& entry) {
+      const nlohmann::json& metadata = entry.second.metadata;
+      return metadata.value("driver", std::string{}) == driver &&
+             metadata.value("lightId", std::string{}) == lightId;
+    });
+  };
+  found.erase(std::remove_if(found.begin(), found.end(), registered), found.end());
+  return found;
 }
 
 bool DeviceManager::registerDevice(const DeviceRecord& record) {
@@ -152,6 +148,7 @@ bool DeviceManager::registerDevice(const DeviceRecord& record) {
     householdId_ = record.householdId;
   }
   devices_.push_back(materialise(record));
+  bind(record);
   return true;
 }
 
@@ -166,6 +163,7 @@ bool DeviceManager::unregisterDevice(const std::string& deviceId) {
       return false;
     }
     devices_.erase(removed, devices_.end());
+    bindings_.erase(deviceId);
   }
   return database_.deleteDevice(deviceId);
 }
@@ -254,15 +252,37 @@ CommandResult DeviceManager::sendCommand(const std::string& deviceId, const std:
     if (match == devices_.end()) {
       return CommandResult::failure("unknown device " + deviceId);
     }
-    before = (*match)->toJson();
-    result = apply(**match, command, params);
-    after = (*match)->toJson();
+    SmartDevice& device = **match;
+    before = device.toJson();
+    const auto binding = bindings_.find(deviceId);
+    DeviceDriver* driver = binding == bindings_.end() ? nullptr : binding->second.driver.get();
+    if (driver == nullptr) {
+      result = apply(device, command, params);
+    } else {
+      const DriverResult sent = driver->send(device, command, params);
+      switch (sent.status) {
+        case DriverStatus::Sent:
+          // The device answered, so it is reachable whatever was stored.
+          device.setStatus(DeviceStatus::Online);
+          result = apply(device, command, params);
+          break;
+        case DriverStatus::Unreachable:
+          device.setStatus(DeviceStatus::Error);
+          result = CommandResult::failure(sent.error);
+          break;
+        case DriverStatus::Rejected:
+          result = CommandResult::failure(sent.error);
+          break;
+      }
+    }
+    after = device.toJson();
     observer = observer_;
     record = project(**match);
   }
 
-  // Persist outside the lock: the device state is already settled.
-  if (result.ok) {
+  // Persist outside the lock: the device state is already settled. A failed
+  // command can still change the status (driver unreachable -> ERROR).
+  if (result.ok || before.value("status", "") != after.value("status", "")) {
     database_.saveDevice(record);
   }
   database_.recordEvent(deviceId, actorId.empty() ? "SYSTEM" : actorType, actorId, command, params,

@@ -1,6 +1,10 @@
 #include "homestr/services/device_manager.hpp"
 
+#include <memory>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -8,6 +12,7 @@
 #include "homestr/models/light.hpp"
 #include "homestr/models/smart_speaker.hpp"
 #include "homestr/services/database.hpp"
+#include "homestr/services/device_driver.hpp"
 
 namespace homestr {
 namespace {
@@ -163,6 +168,169 @@ TEST(OfflineDeviceTest, CommandsFailWhileDeviceIsOffline) {
 
   EXPECT_FALSE(result.ok);
   EXPECT_EQ(result.error, "device unreachable");
+}
+
+// Records what DeviceManager asked it to send and answers with a preset status.
+class FakeDriver : public DeviceDriver {
+ public:
+  explicit FakeDriver(DriverResult answer, std::vector<std::string>* sent)
+      : answer_(std::move(answer)), sent_(sent) {}
+
+  DriverResult send(const SmartDevice& /*device*/, std::string_view command,
+                    const nlohmann::json& /*params*/) override {
+    sent_->emplace_back(command);
+    return answer_;
+  }
+
+ private:
+  DriverResult answer_;
+  std::vector<std::string>* sent_;
+};
+
+class DriverBackedDeviceTest : public ::testing::Test {
+ protected:
+  void SetUp() override { database_.connect(); }
+
+  DeviceManager managerAnswering(DriverResult answer) {
+    return DeviceManager{
+        database_, [this, answer](const DeviceRecord& record) -> std::unique_ptr<DeviceDriver> {
+          if (record.metadata.value("driver", std::string{}) != "fake") {
+            return nullptr;
+          }
+          return std::make_unique<FakeDriver>(answer, &sent_);
+        }};
+  }
+
+  static DeviceRecord drivenLight(std::string status = "ONLINE") {
+    DeviceRecord record = makeLightRecord();
+    record.status = std::move(status);
+    record.metadata = {{"driver", "fake"}, {"lightId", "3"}};
+    return record;
+  }
+
+  InMemoryDatabase database_;
+  std::vector<std::string> sent_;
+};
+
+TEST_F(DriverBackedDeviceTest, SentCommandMutatesModelAndPersists) {
+  DeviceManager manager = managerAnswering(DriverResult::sent());
+  ASSERT_TRUE(manager.registerDevice(drivenLight()));
+
+  const CommandResult result = manager.sendCommand("light-1", "turnOn", {}, "user-1");
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(sent_, std::vector<std::string>{"turnOn"});
+  EXPECT_TRUE(manager.state("light-1")->at("powerOn").get<bool>());
+  EXPECT_TRUE(database_.findDevice("light-1")->powerOn);
+}
+
+TEST_F(DriverBackedDeviceTest, MetadataSurvivesStateWrites) {
+  DeviceManager manager = managerAnswering(DriverResult::sent());
+  ASSERT_TRUE(manager.registerDevice(drivenLight()));
+
+  ASSERT_TRUE(manager.sendCommand("light-1", "setBrightness", {{"level", 20}}, "user-1").ok);
+
+  const auto stored = database_.findDevice("light-1");
+  ASSERT_TRUE(stored.has_value());
+  EXPECT_EQ(stored->metadata.value("driver", std::string{}), "fake");
+  EXPECT_EQ(stored->metadata.value("lightId", std::string{}), "3");
+}
+
+TEST_F(DriverBackedDeviceTest, UnreachableLeavesStateMarksErrorAndAudits) {
+  DeviceManager manager = managerAnswering(DriverResult::unreachable("bridge down"));
+  ASSERT_TRUE(manager.registerDevice(drivenLight()));
+
+  const CommandResult result = manager.sendCommand("light-1", "turnOn", {}, "user-1");
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error, "bridge down");
+  const auto state = manager.state("light-1");
+  EXPECT_FALSE(state->at("powerOn").get<bool>());
+  EXPECT_EQ(state->at("status"), "ERROR");
+  EXPECT_EQ(database_.findDevice("light-1")->status, "ERROR");
+  EXPECT_EQ(database_.event_count(), 1U);
+}
+
+TEST_F(DriverBackedDeviceTest, SuccessfulSendRecoversAnErroredDevice) {
+  DeviceManager manager = managerAnswering(DriverResult::sent());
+  ASSERT_TRUE(manager.registerDevice(drivenLight("ERROR")));
+
+  ASSERT_TRUE(manager.sendCommand("light-1", "turnOn", {}, "user-1").ok);
+
+  EXPECT_EQ(manager.state("light-1")->at("status"), "ONLINE");
+}
+
+TEST_F(DriverBackedDeviceTest, RejectedCommandKeepsStatus) {
+  DeviceManager manager = managerAnswering(DriverResult::rejected("unsupported"));
+  ASSERT_TRUE(manager.registerDevice(drivenLight()));
+
+  EXPECT_FALSE(manager.sendCommand("light-1", "play", {}, "user-1").ok);
+  EXPECT_EQ(manager.state("light-1")->at("status"), "ONLINE");
+  EXPECT_EQ(database_.event_count(), 1U);
+}
+
+TEST_F(DriverBackedDeviceTest, DevicesWithoutDriverStaySimulated) {
+  DeviceManager manager = managerAnswering(DriverResult::unreachable("never called"));
+  ASSERT_TRUE(manager.registerDevice(makeLightRecord()));
+
+  EXPECT_TRUE(manager.sendCommand("light-1", "turnOn", {}, "user-1").ok);
+  EXPECT_TRUE(sent_.empty());
+}
+
+DeviceRecord hueCandidate(std::string id, std::string lightId) {
+  DeviceRecord record = makeLightRecord(std::move(id));
+  record.householdId = "";
+  record.metadata = {{"driver", "hue"}, {"lightId", std::move(lightId)}};
+  return record;
+}
+
+DeviceManager managerDiscovering(Database& database, std::vector<DeviceRecord> found) {
+  return DeviceManager{database, nullptr, [found] { return found; }};
+}
+
+TEST(DiscoveryTest, ReturnsWhatTheSourceFinds) {
+  InMemoryDatabase database;
+  database.connect();
+  DeviceManager manager = managerDiscovering(database, {hueCandidate("a", "1")});
+
+  const auto found = manager.discover();
+
+  ASSERT_EQ(found.size(), 1U);
+  EXPECT_EQ(found.at(0).metadata.at("lightId"), "1");
+}
+
+TEST(DiscoveryTest, DropsCandidatesRegisteredUnderTheSameId) {
+  InMemoryDatabase database;
+  database.connect();
+  DeviceManager manager =
+      managerDiscovering(database, {hueCandidate("a", "1"), hueCandidate("b", "2")});
+  DeviceRecord registered = hueCandidate("a", "1");
+  registered.householdId = "house-1";
+  ASSERT_TRUE(manager.registerDevice(registered));
+
+  const auto found = manager.discover();
+
+  ASSERT_EQ(found.size(), 1U);
+  EXPECT_EQ(found.at(0).id, "b");
+}
+
+TEST(DiscoveryTest, DropsLightsRegisteredByHandUnderAnotherId) {
+  InMemoryDatabase database;
+  database.connect();
+  DeviceManager manager = managerDiscovering(database, {hueCandidate("discovered-id", "3")});
+  DeviceRecord manual = hueCandidate("hand-made-uuid", "3");
+  manual.householdId = "house-1";
+  ASSERT_TRUE(manager.registerDevice(manual));
+
+  EXPECT_TRUE(manager.discover().empty());
+}
+
+TEST(DiscoveryTest, NoSourceMeansNoCandidates) {
+  InMemoryDatabase database;
+  database.connect();
+  DeviceManager manager{database, nullptr, nullptr};
+
+  EXPECT_TRUE(manager.discover().empty());
 }
 
 }  // namespace
