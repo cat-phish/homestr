@@ -49,15 +49,17 @@ Provide **1–2 bullet points** for each question.
 
 **What went well?**
 
-- [We were able to connect the foundation of our project into the real world, with real devices]
+- We were able to connect the foundation of our project into the real world, with real devices
+- Authentication is working well and all tests are passing
 
 **What should improve?**
 
-- [More devices, improved discovery]
+- Add more devices
+- Fix/improve Discovery
 
 **What will you focus on next sprint?**
 
-- [Adding devices, fixxing our Device discovery and improving our UI and fixxing some unintended behavior along with having the server being hosted and be able to be accessed by people outside of the network from anywhere.]
+- Adding devices, fixxing our Device discovery and improving our UI and fixxing some unintended behavior along with having the server being hosted and be able to be accessed by people outside of the network from anywhere.
 
 ---
 
