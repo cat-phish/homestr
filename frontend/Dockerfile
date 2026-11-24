@@ -33,10 +33,11 @@ RUN npm run lint && npm run test && npm run build
 FROM nginx:1.27-alpine AS runtime
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf.template
+COPY docker-entrypoint.sh /docker-entrypoint.sh
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-RUN apk add --no-cache gettext && \
-    envsubst < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && \
-    rm /etc/nginx/conf.d/default.conf.template
+RUN chmod +x /docker-entrypoint.sh && apk add --no-cache gettext
 
 EXPOSE 80
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
