@@ -108,6 +108,19 @@ FetchContent_Declare(date_src
   GIT_TAG v3.0.3 GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(date_src)
 
+# cpp-httplib -- HTTP client for device drivers (Hue API v1). Plain HTTP only:
+# no OpenSSL, zlib or brotli, so it adds no link dependencies.
+set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_USE_ZLIB_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_USE_BROTLI_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_REQUIRE_OPENSSL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(httplib
+  GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+  GIT_TAG v0.18.3 GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(httplib)
+get_target_property(httplibIncludes httplib INTERFACE_INCLUDE_DIRECTORIES)
+set_target_properties(httplib PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${httplibIncludes}")
+
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
@@ -142,7 +155,9 @@ add_library(
   src/models/light.cpp
   src/models/smart_speaker.cpp
   src/models/automation_rule.cpp
+  src/services/device_driver.cpp
   src/services/device_manager.cpp
+  src/services/hue_driver.cpp
   src/services/auth_service.cpp
   src/services/database.cpp
   src/services/home_str.cpp
@@ -154,7 +169,7 @@ get_target_property(dateIncludes date INTERFACE_INCLUDE_DIRECTORIES)
 set_target_properties(date PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${dateIncludes}")
 target_link_libraries(homestr_core PUBLIC nlohmann_json::nlohmann_json
                                           Threads::Threads PkgConfig::SODIUM date::date-tz
-                                   PRIVATE homestr_warnings)
+                                   PRIVATE homestr_warnings httplib::httplib)
 
 if(HOMESTR_MARIADB_AVAILABLE)
   target_compile_definitions(homestr_core PUBLIC HOMESTR_HAS_MARIADB=1)
@@ -198,6 +213,7 @@ if(HOMESTR_BUILD_TESTS)
                                tests/automation_rule_test.cpp
                                tests/database_test.cpp
                                tests/home_str_test.cpp
+                               tests/hue_driver_test.cpp
                                tests/rule_persistence_test.cpp
                                tests/trigger_engine_test.cpp
                                tests/light_test.cpp
@@ -206,7 +222,7 @@ if(HOMESTR_BUILD_TESTS)
                                tests/user_test.cpp)
 
   target_link_libraries(homestr_tests PRIVATE homestr_core Crow::Crow GTest::gtest_main
-                                              GTest::gmock homestr_warnings)
+                                              GTest::gmock homestr_warnings httplib::httplib)
 
   gtest_discover_tests(homestr_tests DISCOVERY_TIMEOUT 30)
 endif()

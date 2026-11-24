@@ -4,7 +4,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import { api } from '@/api/client';
 import { DeviceDiscovery } from '@/components/DeviceDiscovery';
-import type { DeviceRegistration, Light } from '@/types';
+import type { DeviceRegistration, DiscoveredDevice, Light } from '@/types';
 
 vi.mock('@/api/client');
 
@@ -45,7 +45,7 @@ describe('DeviceDiscovery', () => {
   });
 
   it('scans for devices on mount', async () => {
-    vi.mocked(api.discover).mockResolvedValue([mockLight, mockSpeaker]);
+    vi.spyOn(api, 'discover').mockResolvedValue([mockLight, mockSpeaker]);
 
     render(
       <DeviceDiscovery
@@ -63,7 +63,7 @@ describe('DeviceDiscovery', () => {
 
   it('filters out already registered devices', async () => {
     const registered = new Set([mockLight.id]);
-    vi.mocked(api.discover).mockResolvedValue([mockLight, mockSpeaker]);
+    vi.spyOn(api, 'discover').mockResolvedValue([mockLight, mockSpeaker]);
 
     render(
       <DeviceDiscovery
@@ -82,7 +82,7 @@ describe('DeviceDiscovery', () => {
 
   it('allows user to customize device name before registration', async () => {
     const user = userEvent.setup();
-    vi.mocked(api.discover).mockResolvedValue([mockLight]);
+    vi.spyOn(api, 'discover').mockResolvedValue([mockLight]);
     vi.mocked(api.registerDevice).mockResolvedValue({ registered: mockLight.id });
     vi.mocked(api.getDevice).mockResolvedValue(registeredLight);
 
@@ -101,7 +101,7 @@ describe('DeviceDiscovery', () => {
       expect(screen.getByText('Living Room Light')).toBeInTheDocument();
     });
 
-    const nameInput = screen.getByDisplayValue('Living Room Light') as HTMLInputElement;
+    const nameInput = screen.getByDisplayValue<HTMLInputElement>('Living Room Light');
     await user.clear(nameInput);
     await user.type(nameInput, 'Kitchen Ceiling');
 
@@ -120,7 +120,7 @@ describe('DeviceDiscovery', () => {
 
   it('calls onDeviceRegistered with the registered device', async () => {
     const user = userEvent.setup();
-    vi.mocked(api.discover).mockResolvedValue([mockLight]);
+    vi.spyOn(api, 'discover').mockResolvedValue([mockLight]);
     vi.mocked(api.registerDevice).mockResolvedValue({ registered: mockLight.id });
     vi.mocked(api.getDevice).mockResolvedValue(registeredLight);
 
@@ -148,7 +148,7 @@ describe('DeviceDiscovery', () => {
 
   it('removes a device from the list after successful registration', async () => {
     const user = userEvent.setup();
-    vi.mocked(api.discover).mockResolvedValue([mockLight, mockSpeaker]);
+    vi.spyOn(api, 'discover').mockResolvedValue([mockLight, mockSpeaker]);
     vi.mocked(api.registerDevice).mockResolvedValue({ registered: mockLight.id });
     vi.mocked(api.getDevice).mockResolvedValue(registeredLight);
 
@@ -176,7 +176,7 @@ describe('DeviceDiscovery', () => {
   });
 
   it('shows error when scan fails', async () => {
-    vi.mocked(api.discover).mockRejectedValue(new Error('Network error'));
+    vi.spyOn(api, 'discover').mockRejectedValue(new Error('Network error'));
 
     render(
       <DeviceDiscovery
@@ -194,7 +194,7 @@ describe('DeviceDiscovery', () => {
 
   it('closes dialog when close button is clicked', async () => {
     const user = userEvent.setup();
-    vi.mocked(api.discover).mockResolvedValue([]);
+    vi.spyOn(api, 'discover').mockResolvedValue([]);
 
     const onClose = vi.fn();
 
@@ -210,5 +210,41 @@ describe('DeviceDiscovery', () => {
     await user.click(screen.getByRole('button', { name: 'Done' }));
 
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('sends the discovered driver metadata back when registering', async () => {
+    const user = userEvent.setup();
+    const hueLight: DiscoveredDevice = {
+      id: '1b4e28ba-2fa1-81d2-883f-0016d3cca427',
+      name: 'Sofa lamp',
+      ipAddress: '10.44.44.5',
+      type: 'light',
+      status: 'ONLINE',
+      attributes: { brightness: 100, color: '#FFFFFF' },
+      metadata: { driver: 'hue', lightId: '1', color: true },
+    };
+    vi.spyOn(api, 'discover').mockResolvedValue([hueLight]);
+    vi.mocked(api.registerDevice).mockResolvedValue({ registered: hueLight.id });
+    vi.mocked(api.getDevice).mockResolvedValue({ ...registeredLight, id: hueLight.id });
+
+    render(
+      <DeviceDiscovery
+        householdId="home-1"
+        registeredDeviceIds={new Set()}
+        onDeviceRegistered={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    await user.click(await screen.findByRole('button', { name: 'Add' }));
+
+    await waitFor(() => {
+      expect(api.registerDevice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: hueLight.id,
+          householdId: 'home-1',
+          metadata: { driver: 'hue', lightId: '1', color: true },
+        }),
+      );
+    });
   });
 });

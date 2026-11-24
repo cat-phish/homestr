@@ -47,6 +47,38 @@ bool HomeStr::start(const std::string& householdId) {
   return true;
 }
 
+RenameResult HomeStr::renameDevice(const std::string& deviceId, std::string_view name,
+                                   const std::string& actorId) {
+  const RenameResult result = deviceManager_.renameDevice(deviceId, name, actorId);
+  if (result == RenameResult::Renamed) {
+    if (const auto state = deviceManager_.state(deviceId); state) {
+      publish({{"type", "device_state"}, {"device", *state}});
+    }
+  }
+  return result;
+}
+
+bool HomeStr::removeDevice(const std::string& deviceId) {
+  const std::lock_guard<std::recursive_mutex> engine(engineMutex_);
+  if (!deviceManager_.unregisterDevice(deviceId)) {
+    return false;
+  }
+  {
+    const std::lock_guard<std::mutex> lock(rulesMutex_);
+    for (AutomationRule& rule : rules_) {
+      RuleRecord record = RuleRecord::fromRule(rule, householdId_);
+      const auto before = record.actions.size();
+      std::erase_if(record.actions,
+                    [&deviceId](const RuleAction& action) { return action.deviceId == deviceId; });
+      if (record.actions.size() != before) {
+        rule = record.toRule();
+      }
+    }
+  }
+  publishSnapshot();
+  return true;
+}
+
 std::vector<AutomationRule> HomeStr::rules() const {
   const std::lock_guard<std::mutex> lock(rulesMutex_);
   return rules_;

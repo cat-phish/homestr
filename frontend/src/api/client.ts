@@ -3,6 +3,7 @@ import type {
   Dashboard,
   Device,
   DeviceRegistration,
+  DiscoveredDevice,
   LoginResponse,
   User,
 } from '@/types';
@@ -103,8 +104,8 @@ export const api = {
     request<Device>(`/devices/${encodeURIComponent(deviceId)}`),
 
   /** GET /devices/discover -- unregistered devices seen on the LAN. */
-  async discover(): Promise<DeviceRegistration[]> {
-    const { discovered } = await request<{ discovered: DeviceRegistration[] }>('/devices/discover');
+  async discover(): Promise<DiscoveredDevice[]> {
+    const { discovered } = await request<{ discovered: DiscoveredDevice[] }>('/devices/discover');
     return discovered;
   },
 
@@ -112,6 +113,13 @@ export const api = {
     request<{ registered: string }>('/devices', {
       method: 'POST',
       body: JSON.stringify(device),
+    }),
+
+  /** PATCH /devices/{id} -- admin only; returns the renamed device. */
+  renameDevice: (deviceId: string, name: string): Promise<Device> =>
+    request<Device>(`/devices/${encodeURIComponent(deviceId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
     }),
 
   unregisterDevice: (deviceId: string): Promise<void> =>

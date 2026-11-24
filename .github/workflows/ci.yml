@@ -117,14 +117,30 @@ jobs:
 
       # Proves init.sql applies to a clean server, so a broken DDL cannot reach
       # main and break every developer's first `docker compose up`.
+      # The runner image has no MariaDB client, so use the one inside the
+      # service container: it always exists and matches the server version.
       - name: Apply init.sql
-        run: mariadb -h 127.0.0.1 -P 3306 -u root -pci_root < database/init.sql
+        run: docker exec -i "${{ job.services.mariadb.id }}" mariadb -u root -pci_root < database/init.sql
 
+      # init.sql promises every statement is idempotent; hold it to that.
+      - name: Re-apply init.sql
+        run: docker exec -i "${{ job.services.mariadb.id }}" mariadb -u root -pci_root < database/init.sql
+
+      # Every table init.sql declares must exist, and nothing else.
       - name: Verify the expected tables exist
         run: |
-          mariadb -h 127.0.0.1 -P 3306 -u root -pci_root homestr_db \
-            -e "SELECT table_name FROM information_schema.tables
-                WHERE table_schema = 'homestr_db' ORDER BY table_name;"
+          expected=$(grep -oE '^CREATE TABLE IF NOT EXISTS [a-z_]+' database/init.sql \
+            | awk '{print $6}' | LC_ALL=C sort)
+          actual=$(docker exec "${{ job.services.mariadb.id }}" mariadb -N -u root -pci_root -e \
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'homestr_db';" \
+            | LC_ALL=C sort)
+          echo "Tables in homestr_db:"
+          echo "$actual"
+          if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+            echo "::error::Schema mismatch. Expected tables:"
+            echo "$expected"
+            exit 1
+          fi
 
   docker:
     name: Docker images

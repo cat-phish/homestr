@@ -139,7 +139,10 @@ void ApiController::registerRoutes(App& app) {
       discovered.push_back({{"id", record.id},
                             {"name", record.name},
                             {"ipAddress", record.ipAddress},
-                            {"type", record.deviceType}});
+                            {"type", record.deviceType},
+                            {"status", record.status},
+                            {"attributes", record.attributes},
+                            {"metadata", record.metadata}});
     }
     return jsonResponse(200, {{"discovered", std::move(discovered)}});
   });
@@ -160,6 +163,10 @@ void ApiController::registerRoutes(App& app) {
         record.deviceType = body->value("type", std::string{"generic"});
         record.status = body->value("status", std::string{"OFFLINE"});
         record.attributes = body->value("attributes", nlohmann::json::object());
+        record.metadata = body->value("metadata", nlohmann::json::object());
+        if (!record.metadata.is_object()) {
+          return errorResponse(400, "metadata must be an object");
+        }
 
         if (record.id.empty() || record.name.empty() || record.ipAddress.empty()) {
           return errorResponse(400, "id, name and ipAddress are required");
@@ -180,11 +187,32 @@ void ApiController::registerRoutes(App& app) {
   });
 
   CROW_ROUTE(app, "/api/v1/devices/<string>")
+      .methods(crow::HTTPMethod::PATCH)(
+          [this, &app](const crow::request& request, const std::string& deviceId) {
+            const std::optional<nlohmann::json> body = parseBody(request);
+            if (!body || !body->contains("name") || !body->at("name").is_string()) {
+              return errorResponse(400, "'name' must be a string");
+            }
+            const auto& user = app.get_context<AuthMiddleware>(request).user;
+            switch (hub_.renameDevice(deviceId, body->at("name").get<std::string>(), user->id)) {
+              case RenameResult::Renamed:
+                break;
+              case RenameResult::UnknownDevice:
+                return errorResponse(404, "unknown device " + deviceId);
+              case RenameResult::InvalidName:
+                return errorResponse(400, "name must be 1-100 characters");
+              case RenameResult::StorageFailed:
+                return errorResponse(503, "could not save the new name");
+            }
+            return jsonResponse(200, hub_.devices().state(deviceId).value_or(nlohmann::json{}));
+          });
+
+  CROW_ROUTE(app, "/api/v1/devices/<string>")
       .methods(crow::HTTPMethod::DELETE)([this](const std::string& deviceId) {
-        if (!hub_.devices().unregisterDevice(deviceId)) {
+        if (!hub_.removeDevice(deviceId)) {
           return errorResponse(404, "unknown device " + deviceId);
         }
-        return jsonResponse(204, nlohmann::json::object());
+        return crow::response(204);  // 204 carries no body
       });
 
   // --- Device control -----------------------------------------------------

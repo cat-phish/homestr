@@ -84,7 +84,12 @@ export interface DeviceRegistration {
   type: DeviceType;
   status?: DeviceStatus;
   attributes?: Record<string, unknown>;
+  /** Driver configuration, e.g. `{ driver: 'hue', lightId: '3' }`. Omit for a simulated device. */
+  metadata?: Record<string, unknown>;
 }
+
+/** GET /devices/discover entry: a registration candidate without a household. */
+export type DiscoveredDevice = Omit<DeviceRegistration, 'householdId'>;
 
 /** Frames pushed over /api/v1/ws. */
 export type ServerEvent =

@@ -88,3 +88,59 @@ describe('DeviceCard', () => {
     expect(screen.getByRole('article')).toHaveAttribute('data-stale', 'true');
   });
 });
+
+describe('DeviceCard admin actions', () => {
+  it('hides Rename and Remove unless their handlers are given', () => {
+    render(<DeviceCard device={light} onCommand={vi.fn()} />);
+
+    expect(screen.queryByRole('button', { name: /rename/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /remove/i })).not.toBeInTheDocument();
+  });
+
+  it('renames with the trimmed name', async () => {
+    const user = userEvent.setup();
+    const onRename = vi.fn();
+    render(<DeviceCard device={light} onCommand={vi.fn()} onRename={onRename} />);
+
+    await user.click(screen.getByRole('button', { name: 'Rename Kitchen Ceiling' }));
+    const input = screen.getByLabelText('Name');
+    await user.clear(input);
+    await user.type(input, '  Sofa lamp  {Enter}');
+
+    expect(onRename).toHaveBeenCalledWith('light-1', 'Sofa lamp');
+    expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
+  });
+
+  it('cannot save a blank name, and Cancel leaves the name alone', async () => {
+    const user = userEvent.setup();
+    const onRename = vi.fn();
+    render(<DeviceCard device={light} onCommand={vi.fn()} onRename={onRename} />);
+
+    await user.click(screen.getByRole('button', { name: 'Rename Kitchen Ceiling' }));
+    await user.clear(screen.getByLabelText('Name'));
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onRename).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { name: 'Kitchen Ceiling' })).toBeInTheDocument();
+  });
+
+  it('removes only after the user confirms', async () => {
+    const user = userEvent.setup();
+    const onRemove = vi.fn();
+    const confirm = vi
+      .spyOn(window, 'confirm')
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    render(<DeviceCard device={light} onCommand={vi.fn()} onRemove={onRemove} />);
+    const remove = screen.getByRole('button', { name: 'Remove Kitchen Ceiling' });
+
+    await user.click(remove);
+    expect(onRemove).not.toHaveBeenCalled();
+
+    await user.click(remove);
+    expect(onRemove).toHaveBeenCalledWith('light-1');
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Kitchen Ceiling'));
+    confirm.mockRestore();
+  });
+});

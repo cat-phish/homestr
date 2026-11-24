@@ -2,6 +2,7 @@
 
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
@@ -37,6 +38,9 @@ class SmartDevice {
   bool isOn() const noexcept { return powerOn_; }
 
   void setStatus(DeviceStatus status) noexcept { status_ = status; }
+
+  // Validation (trimmed, 1-100 characters) is DeviceManager::renameDevice's job.
+  void setName(std::string name) { name_ = std::move(name); }
 
   // Device type discriminator persisted in `devices.device_type`.
   virtual std::string_view type() const noexcept = 0;

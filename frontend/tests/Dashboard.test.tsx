@@ -210,3 +210,59 @@ describe('automatic routine summaries', () => {
     expect(screen.queryByRole('button', { name: 'Run Scheduled' })).not.toBeInTheDocument();
   });
 });
+
+describe('dashboard device management', () => {
+  it('shows Rename and Remove to admins only', async () => {
+    const { unmount } = render(<Dashboard user={mockAdmin} />);
+    expect(await screen.findByRole('button', { name: 'Remove Kitchen' })).toBeInTheDocument();
+    unmount();
+
+    render(<Dashboard user={{ ...mockAdmin, role: 'user' }} />);
+    await screen.findByRole('heading', { name: 'Kitchen' });
+    expect(screen.queryByRole('button', { name: 'Remove Kitchen' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Rename Kitchen' })).not.toBeInTheDocument();
+  });
+
+  it('removes the card once the hub confirms', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(api, 'unregisterDevice').mockResolvedValue(undefined);
+    render(<Dashboard user={mockAdmin} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Remove Kitchen' }));
+
+    expect(api.unregisterDevice).toHaveBeenCalledWith('light-1');
+    expect(await screen.findByText('No devices registered yet.')).toBeInTheDocument();
+  });
+
+  it('shows the renamed device from the hub response', async () => {
+    const user = userEvent.setup();
+    const [light] = initial.devices;
+    if (light === undefined) {
+      throw new Error('fixture needs a device');
+    }
+    vi.spyOn(api, 'renameDevice').mockResolvedValue({ ...light, name: 'Sofa lamp' });
+    render(<Dashboard user={mockAdmin} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Rename Kitchen' }));
+    await user.clear(screen.getByLabelText('Name'));
+    await user.type(screen.getByLabelText('Name'), 'Sofa lamp{Enter}');
+
+    expect(api.renameDevice).toHaveBeenCalledWith('light-1', 'Sofa lamp');
+    expect(await screen.findByRole('heading', { name: 'Sofa lamp' })).toBeInTheDocument();
+  });
+
+  it('reports a failed removal and keeps the card', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(api, 'unregisterDevice').mockRejectedValue(
+      new ApiError(403, 'administrator permission required'),
+    );
+    render(<Dashboard user={mockAdmin} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Remove Kitchen' }));
+
+    expect(await screen.findByText('administrator permission required')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Kitchen' })).toBeInTheDocument();
+  });
+});
