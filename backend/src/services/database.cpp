@@ -271,9 +271,7 @@ class MariaDbDatabase : public Database {
   bool connect() override {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
     try {
-      sql::Driver* driver = sql::mariadb::get_driver_instance();
-      sql::Properties properties({{"user", config_.user}, {"password", config_.password}});
-      connection_.reset(driver->connect(config_.connectionUrl(), properties));
+      connection_ = open();
       return connection_ != nullptr;
     } catch (const sql::SQLException& error) {
       std::cerr << "[db] connect failed: " << error.what() << '\n';
@@ -284,11 +282,11 @@ class MariaDbDatabase : public Database {
 
   bool isConnected() const override {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return connection_ != nullptr && !connection_->isClosed();
+    return isAlive();
   }
 
   std::optional<UserRecord> findUserByEmail(const std::string& email) override {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto lock = acquire();
     try {
       std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
           "SELECT id, name, email, password_hash, role FROM users WHERE "
@@ -312,7 +310,7 @@ class MariaDbDatabase : public Database {
   }
 
   bool updatePasswordHash(const std::string& email, const std::string& hash) override {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto lock = acquire();
     try {
       connection_->setAutoCommit(false);
       std::unique_ptr<sql::PreparedStatement> update(
@@ -339,7 +337,7 @@ class MariaDbDatabase : public Database {
   }
 
   bool saveSession(const SessionRecord& session, const std::string& verifiedHash) override {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto lock = acquire();
     try {
       std::unique_ptr<sql::PreparedStatement> statement(
           connection_->prepareStatement("INSERT INTO sessions (token_hash, user_id, expires_at) "
@@ -358,7 +356,7 @@ class MariaDbDatabase : public Database {
 
   std::optional<UserRecord> findSessionUser(const std::string& tokenHash,
                                             std::int64_t now) override {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto lock = acquire();
     try {
       std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
           "SELECT u.id, u.name, u.email, u.password_hash, u.role FROM users u "
@@ -380,7 +378,7 @@ class MariaDbDatabase : public Database {
   }
 
   bool deleteSession(const std::string& tokenHash) override {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto lock = acquire();
     try {
       std::unique_ptr<sql::PreparedStatement> statement(
           connection_->prepareStatement("DELETE FROM sessions WHERE token_hash = ?"));
@@ -394,7 +392,7 @@ class MariaDbDatabase : public Database {
   }
 
   std::optional<std::vector<RuleRecord>> listRules(const std::string& householdId) override {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto lock = acquire();
     try {
       std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
           "SELECT r.id, r.household_id, r.name, r.enabled, r.trigger_type, r.trigger_payload, "
@@ -438,7 +436,7 @@ class MariaDbDatabase : public Database {
   }
 
   bool saveRule(const RuleRecord& record) override {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto lock = acquire();
     try {
       connection_->setAutoCommit(false);
       {
@@ -499,7 +497,7 @@ class MariaDbDatabase : public Database {
 
   bool claimScheduledRun(const std::string& householdId, const std::string& ruleId,
                          std::int64_t minute) override {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto lock = acquire();
     try {
       std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
           "UPDATE automation_rules SET last_fired_at = FROM_UNIXTIME(?) "
@@ -517,7 +515,7 @@ class MariaDbDatabase : public Database {
   }
 
   bool deleteRule(const std::string& householdId, const std::string& ruleId) override {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto lock = acquire();
     try {
       std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
           "DELETE FROM automation_rules WHERE id = ? AND household_id = ?"));
@@ -531,7 +529,7 @@ class MariaDbDatabase : public Database {
   }
 
   std::vector<DeviceRecord> listDevices(const std::string& householdId) override {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto lock = acquire();
     std::vector<DeviceRecord> result;
     try {
       std::unique_ptr<sql::PreparedStatement> statement(
@@ -548,7 +546,7 @@ class MariaDbDatabase : public Database {
   }
 
   std::optional<DeviceRecord> findDevice(const std::string& deviceId) override {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto lock = acquire();
     try {
       std::unique_ptr<sql::PreparedStatement> statement(
           connection_->prepareStatement(DEVICE_SELECT + std::string{" WHERE d.id = ?"}));
@@ -565,7 +563,7 @@ class MariaDbDatabase : public Database {
   }
 
   bool saveDevice(const DeviceRecord& record) override {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto lock = acquire();
     try {
       std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
           "INSERT INTO devices (id, household_id, name, ip_address, "
@@ -592,7 +590,7 @@ class MariaDbDatabase : public Database {
   }
 
   bool deleteDevice(const std::string& deviceId) override {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto lock = acquire();
     try {
       // The subtype rows and audit events cascade from devices.id.
       std::unique_ptr<sql::PreparedStatement> statement(
@@ -608,7 +606,7 @@ class MariaDbDatabase : public Database {
   bool recordEvent(const std::string& deviceId, const std::string& actorType,
                    const std::string& actorId, const std::string& command,
                    const nlohmann::json& payload, bool succeeded) override {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto lock = acquire();
     try {
       std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(
           "INSERT INTO device_events (device_id, actor_type, actor_id, "
@@ -704,6 +702,47 @@ class MariaDbDatabase : public Database {
 
     return true;
   }
+
+  // Managed hosts (Railway, RDS, ...) drop idle connections via wait_timeout or the TCP proxy,
+  // and the connector only notices on the next query ("Server has gone away"). Ping under the
+  // lock before every operation and reconnect when the link is dead.
+  std::unique_lock<std::recursive_mutex> acquire() {
+    std::unique_lock<std::recursive_mutex> lock(mutex_);
+    if (!isAlive()) {
+      reconnect();
+    }
+    return lock;
+  }
+
+  bool isAlive() const {
+    try {
+      return connection_ != nullptr && !connection_->isClosed() &&
+             connection_->isValid(VALIDATION_TIMEOUT_SECONDS);
+    } catch (const sql::SQLException&) {
+      return false;
+    }
+  }
+
+  std::unique_ptr<sql::Connection> open() const {
+    sql::Driver* driver = sql::mariadb::get_driver_instance();
+    sql::Properties properties({{"user", config_.user}, {"password", config_.password}});
+    return std::unique_ptr<sql::Connection>(driver->connect(config_.connectionUrl(), properties));
+  }
+
+  // Keeps the old connection when the reconnect fails, so callers still hit a catchable
+  // SQLException instead of a null pointer.
+  void reconnect() {
+    std::cerr << "[db] connection lost; reconnecting\n";
+    try {
+      if (auto fresh = open()) {
+        connection_ = std::move(fresh);
+      }
+    } catch (const sql::SQLException& error) {
+      std::cerr << "[db] reconnect failed: " << error.what() << '\n';
+    }
+  }
+
+  static constexpr int VALIDATION_TIMEOUT_SECONDS = 2;
 
   mutable std::recursive_mutex mutex_;
   DatabaseConfig config_;
