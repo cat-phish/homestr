@@ -1,0 +1,14 @@
+# Normalize line endings for shell scripts to LF (Unix)
+# This ensures Docker containers always get Unix line endings,
+# regardless of whether the repo is cloned on Windows, Mac, or Linux
+*.sh text eol=lf
+scripts/*.sh text eol=lf
+backend/scripts/*.sh text eol=lf
+
+# Normalize other development files
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sql text eol=lf
+*.md text eol=lf
+Dockerfile text eol=lf
+.env* text eol=lf
