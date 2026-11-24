@@ -17,9 +17,18 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       
-      - name: Build and push
+      - name: Build and push backend
         uses: docker/build-push-action@v4
         with:
           context: ./backend
+          target: runtime
           push: true
           tags: xenuk/homestr-backend:latest
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend
+          target: runtime
+          push: true
+          tags: xenuk/homestr-frontend:latest
